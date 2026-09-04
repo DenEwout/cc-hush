@@ -217,9 +217,9 @@ mkdir -p ~/.cc-hush &amp;&amp; mv ~/.claude/plugins/data/hush-cc-hush/models ~/.
               <pre class="cmd">npm i -g .            # from the checkout; after npm publish: npm i -g cc-hush
 cc-hush install
 cc-hush status
-schtasks /query /tn cc-hush /v /fo list</pre>
-              <div class="check pass"><b>Pass</b><span>Model files print <code>done</code> without a download. Install says <code>scheduled task "cc-hush" registered, runs at logon of AzureAD\EwoutVanGossum</code>, the chain question (next step), then <code>daemon v0.2.0 up on http://127.0.0.1:47831 (model ready, upstream http://127.0.0.1:8787/w/claude)</code>, then that <code>ANTHROPIC_BASE_URL</code> now points at cc-hush. <code>schtasks</code> shows Status: Running. No console window appeared.</span></div>
-              <div class="check fail"><b>If not</b><span><code>schtasks</code> rejects the XML: check <code>~/.cc-hush/cc-hush.task.xml</code>, the <code>UserId</code> must be <code>AzureAD\EwoutVanGossum</code>. Task registered but daemon never up and <code>daemon.log</code> empty: the S4U logon type is refused for this account ("has not been granted the requested logon type"). Run <code>cc-hush start --log</code> by hand to keep working and open an issue to switch the task to an interactive logon with a hidden launcher. <code>daemon.log</code> says port in use: step 1 was skipped. A console window flashing at logon is the same S4U problem.</span></div>
+reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v cc-hush</pre>
+              <div class="check pass"><b>Pass</b><span>Model files print <code>done</code> without a download. Install says <code>logon entry "cc-hush" registered in HKCU\...\Run, hidden launcher ...\.cc-hush\start.vbs</code>, the chain question (next step), then <code>daemon v0.2.0 up on http://127.0.0.1:47831 (model ready, upstream http://127.0.0.1:8787/w/claude)</code>, then that <code>ANTHROPIC_BASE_URL</code> now points at cc-hush. <code>reg query</code> shows the <code>wscript.exe //B //Nologo "...start.vbs"</code> value. No console window appeared.</span></div>
+              <div class="check fail"><b>If not</b><span><code>reg add</code> denied: a policy blocks HKCU Run writes; run <code>cc-hush start --log</code> by hand for now. Entry present but daemon never up and <code>daemon.log</code> empty: run <code>wscript //B //Nologo %USERPROFILE%\.cc-hush\start.vbs</code> from a terminal and read the error. <code>daemon.log</code> says port in use: step 1 was skipped. A leftover <code>~/.cc-hush/cc-hush.task.xml</code> from the first attempt can be deleted.</span></div>
             </div>
           </details>
 
@@ -257,12 +257,12 @@ claude plugin list</pre>
           <details class="step" id="s1-6">
             <summary><input type="checkbox" aria-label="Done"><div><div class="title">Prove the service, the hook fallback, and a real logon</div><div class="sub">Three ways the daemon comes back</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
             <div class="body">
-              <pre class="cmd">cc-hush stop &amp;&amp; cc-hush status                    # {"ok":false,...}: a clean exit is not restarted
-schtasks /run /tn cc-hush &amp;&amp; sleep 5 &amp;&amp; cc-hush status   # service brings it back
+              <pre class="cmd">cc-hush stop &amp;&amp; cc-hush status                    # {"ok":false,...}
+wscript //B //Nologo "$USERPROFILE/.cc-hush/start.vbs" &amp;&amp; sleep 5 &amp;&amp; cc-hush status   # the logon launcher brings it back
 cc-hush stop                                        # now open a new Claude Code session</pre>
               <p class="note">Then sign out of Windows and back in (or reboot). Within a minute <code>cc-hush status</code> must be ready without any window opening.</p>
-              <div class="check pass"><b>Pass</b><span><code>schtasks /run</code> gives a ready daemon. The new session's SessionStart says "started by this hook, not by the startup service" and suggests <code>cc-hush install</code>. After logon the daemon is up on its own and <code>daemon.log</code> shows one new <code>listening</code> line.</span></div>
-              <div class="check fail"><b>If not</b><span>Hook fallback silent: Claude Code's PATH lacks the npm global bin; run <code>npm prefix -g</code> and compare. No daemon after logon: <code>schtasks /query /tn cc-hush /v /fo list</code>, look at Last Result (0x41303 means never ran, 0x80070569 is the logon-type refusal) and <code>Get-WinEvent -LogName Microsoft-Windows-TaskScheduler/Operational -MaxEvents 20</code>.</span></div>
+              <div class="check pass"><b>Pass</b><span>The launcher gives a ready daemon. The new session's SessionStart says "started by this hook, not by the startup service" and suggests <code>cc-hush install</code>. After logon the daemon is up on its own and <code>daemon.log</code> shows one new <code>listening</code> line.</span></div>
+              <div class="check fail"><b>If not</b><span>Hook fallback silent: Claude Code's PATH lacks the npm global bin; run <code>npm prefix -g</code> and compare. No daemon after logon: check the Run entry is still there (<code>reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v cc-hush</code>) and that Task Manager, Startup apps, does not list cc-hush as disabled.</span></div>
             </div>
           </details>
 
@@ -300,7 +300,7 @@ cc-hush stop                                        # now open a new Claude Code
             <div class="body">
               <pre class="cmd">cc-hush stop</pre>
               <p class="note">Then send Claude a message, and separately ask it to run any Bash command.</p>
-              <div class="check pass"><b>Pass</b><span>The API call fails with an unreachable-server error. The tool call is blocked with "privacy daemon unavailable". Nothing was sent unredacted. <code>schtasks /run /tn cc-hush</code> or a new session brings the daemon back.</span></div>
+              <div class="check pass"><b>Pass</b><span>The API call fails with an unreachable-server error. The tool call is blocked with "privacy daemon unavailable". Nothing was sent unredacted. A new session (hook fallback) or the next logon brings the daemon back.</span></div>
               <div class="check fail"><b>If not</b><span>If the tool call ran, the hook did not fire (see gate 1). If the API call succeeded, <code>ANTHROPIC_BASE_URL</code> is not in effect for that session.</span></div>
             </div>
           </details>
@@ -309,12 +309,12 @@ cc-hush stop                                        # now open a new Claude Code
             <summary><input type="checkbox" aria-label="Done"><div><div class="title">Uninstall, then install again</div><div class="sub">The reverse path works and install is idempotent</div></div><div class="tags"></div></summary>
             <div class="body">
               <pre class="cmd">cc-hush uninstall
-schtasks /query /tn cc-hush          # ERROR: The system cannot find the file specified.
+reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v cc-hush   # ERROR: ... unable to find
 cc-hush status                       # {"ok":false,...}
 ls ~/.cc-hush                        # models, token, audit.sqlite, config.json still there
 cc-hush install</pre>
-              <div class="check pass"><b>Pass</b><span>Task gone and daemon down after uninstall, data kept. Reinstall finishes in seconds with no download, the task is back, <code>status</code> is ready, and the vault is empty (new process, in-memory vault).</span></div>
-              <div class="check fail"><b>If not</b><span>Task still listed: <code>schtasks /delete /f /tn cc-hush</code> by hand and check the account can delete its own tasks. Reinstall downloads again: <code>HUSH_DATA</code> is set in this shell to a different dir.</span></div>
+              <div class="check pass"><b>Pass</b><span>Run entry and <code>start.vbs</code> gone, daemon down after uninstall, data kept. Reinstall finishes in seconds with no download, the task is back, <code>status</code> is ready, and the vault is empty (new process, in-memory vault).</span></div>
+              <div class="check fail"><b>If not</b><span>Entry still listed: <code>reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v cc-hush /f</code> by hand. Reinstall downloads again: <code>HUSH_DATA</code> is set in this shell to a different dir.</span></div>
             </div>
           </details>
 

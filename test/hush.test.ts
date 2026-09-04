@@ -131,7 +131,7 @@ test('detect: never re-tag inside an existing token', async () => {
 });
 
 test('install: ANTHROPIC_BASE_URL merge into settings.json', async () => {
-  const { mergeBaseUrl, windowsTaskXml, systemdUnit } = await import('../daemon/service.ts');
+  const { mergeBaseUrl, windowsLauncherVbs, systemdUnit } = await import('../daemon/service.ts');
   const proxy = 'http://127.0.0.1:47831';
   const fresh = mergeBaseUrl(undefined);
   assert.equal(JSON.parse(fresh.text!).env.ANTHROPIC_BASE_URL, proxy);
@@ -147,7 +147,6 @@ test('install: ANTHROPIC_BASE_URL merge into settings.json', async () => {
   assert.equal(mergeBaseUrl(undefined, true).upstream, undefined);
   assert.throws(() => mergeBaseUrl('{ not json'));
   const launcher = { node: '/usr/local/bin/node', script: '/usr/local/lib/node_modules/cc-hush/bin/cc-hush.ts' };
-  assert.match(windowsTaskXml(launcher, 'DOM\\me'), /<Arguments>&quot;\/usr\/local\/lib\/node_modules\/cc-hush\/bin\/cc-hush.ts&quot; start --log<\/Arguments>/);
-  assert.match(windowsTaskXml(launcher, 'a&b'), /<UserId>a&amp;b<\/UserId>/);
+  assert.equal(windowsLauncherVbs({ node: 'C:\\n\\node.exe', script: 'C:\\x y\\cc-hush.ts' }), 'CreateObject("WScript.Shell").Run """C:\\n\\node.exe"" ""C:\\x y\\cc-hush.ts"" start --log", 0, False\r\n');
   assert.match(systemdUnit(launcher), /ExecStart="\/usr\/local\/bin\/node" "\/usr\/local\/lib\/node_modules\/cc-hush\/bin\/cc-hush.ts" start --log/);
 });

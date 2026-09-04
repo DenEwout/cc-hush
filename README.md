@@ -41,7 +41,7 @@ claude plugin install hush
 `cc-hush install` does four things, and is safe to re-run after `npm i -g cc-hush@latest` or a Node upgrade:
 
 1. Downloads the model into `~/.cc-hush/models` with progress.
-2. Registers a startup service for your user: a Windows scheduled task at logon (hidden, restarts on failure), a macOS launch agent (`~/Library/LaunchAgents/com.cc-hush.daemon.plist`), or a Linux systemd user unit (`~/.config/systemd/user/cc-hush.service`; headless boxes also need `loginctl enable-linger`).
+2. Registers a startup service for your user: a Windows logon entry (`HKCU\...\CurrentVersion\Run`, started hidden through `~/.cc-hush/start.vbs`), a macOS launch agent (`~/Library/LaunchAgents/com.cc-hush.daemon.plist`), or a Linux systemd user unit (`~/.config/systemd/user/cc-hush.service`; headless boxes also need `loginctl enable-linger`).
 3. Stops any running daemon and starts the new one through the service, waits for `/health`.
 4. Sets `ANTHROPIC_BASE_URL` to `http://127.0.0.1:47831` in `~/.claude/settings.json` (`CLAUDE_CONFIG_DIR` respected). If the variable already points at another proxy, install asks whether to chain it: answer yes and that URL becomes `upstream` in `~/.cc-hush/config.json`, so traffic goes Claude Code, cc-hush, your proxy, Anthropic. Answer no, or run non-interactively, and the setting is left alone with instructions printed.
 
@@ -129,7 +129,7 @@ curl -H "x-hush-token: $(cat ~/.cc-hush/token)" 127.0.0.1:47831/debug/vault
 
 ## Storage
 
-`~/.cc-hush/`: `models/`, `config.json`, `token`, `audit.sqlite` (`audit(ts, session_id, event, tool_name, label, count, decision, latency_ms)`, never values), `daemon.log`, and on Windows the scheduled task XML.
+`~/.cc-hush/`: `models/`, `config.json`, `token`, `audit.sqlite` (`audit(ts, session_id, event, tool_name, label, count, decision, latency_ms)`, never values), `daemon.log`, and on Windows `start.vbs`.
 
 ## Limits
 
@@ -138,6 +138,7 @@ curl -H "x-hush-token: $(cat ~/.cc-hush/token)" 127.0.0.1:47831/debug/vault
 - The local transcript keeps raw values. Only outbound traffic is redacted.
 - Redaction is memoized per block by content hash, which keeps prompt caching stable.
 - The service pins the Node binary that ran `cc-hush install`. After switching Node versions (nvm, fnm, volta), re-run `cc-hush install`.
+- On Windows a crashed daemon is not restarted until the next logon or the next Claude Code session (the SessionStart hook restarts it). launchd and systemd restart on failure.
 
 ## Development
 

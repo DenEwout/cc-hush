@@ -170,7 +170,7 @@ cc-hush/
   daemon/detect.ts         regex + model, span merge, allowlist, MCP key pass
   daemon/vault.ts          tokenization, rehydration, whitelist check
   daemon/guard.ts          SQL extraction, destructive tiers, PII column match
-  daemon/service.ts        startup service per OS (schtasks S4U task, launchd agent, systemd user unit), settings.json merge
+  daemon/service.ts        startup service per OS (HKCU Run key + hidden wscript launcher, launchd agent, systemd user unit), settings.json merge
   daemon/paths.ts          ~/.cc-hush, port, token and log file
   .claude-plugin/marketplace.json   source: ./plugin
   plugin/.claude-plugin/plugin.json
@@ -180,7 +180,7 @@ cc-hush/
   plugin/skills/*/SKILL.md
 ```
 
-`cc-hush install` is the only install path. No npm postinstall: it would run as root under `sudo npm i -g` and silently skip under `--ignore-scripts`. The service pins `process.execPath` and the absolute path of `bin/cc-hush.ts`; a Node switch means re-running install. Exit code 0 on `EADDRINUSE` is what stops launchd (`KeepAlive.SuccessfulExit=false`), systemd (`Restart=on-failure`) and Task Scheduler (`RestartOnFailure`) from relaunching against a daemon that a hook already started.
+`cc-hush install` is the only install path. No npm postinstall: it would run as root under `sudo npm i -g` and silently skip under `--ignore-scripts`. The service pins `process.execPath` and the absolute path of `bin/cc-hush.ts`; a Node switch means re-running install. Exit code 0 on `EADDRINUSE` is what stops launchd (`KeepAlive.SuccessfulExit=false`) and systemd (`Restart=on-failure`) from relaunching against a daemon that a hook already started. Windows uses a per-user Run key because `schtasks` refuses hidden (S4U) tasks without elevation; it has no restart-on-failure, the SessionStart hook covers that.
 
 ## Acceptance gates
 

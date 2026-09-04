@@ -6,7 +6,8 @@ import { BASE_URL, CONFIG_FILE, DATA } from './paths.ts';
 
 export type Launcher = { node: string; script: string };
 
-const TASK_NAME = 'cc-hush';
+const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const RUN_VALUE = 'cc-hush';
 const LAUNCHD_LABEL = 'com.cc-hush.daemon';
 const SYSTEMD_UNIT = 'cc-hush.service';
 
@@ -15,21 +16,7 @@ const tryRun = (file: string, args: string[]) => { try { return run(file, args);
 const xml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 const uid = () => process.getuid?.() ?? 0;
 
-export const windowsTaskXml = ({ node, script }: Launcher, user: string) => `<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>${xml(user)}</UserId></LogonTrigger></Triggers>
-  <Principals><Principal id="Author"><UserId>${xml(user)}</UserId><LogonType>S4U</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <StartWhenAvailable>true</StartWhenAvailable>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>
-  </Settings>
-  <Actions Context="Author"><Exec><Command>${xml(node)}</Command><Arguments>&quot;${xml(script)}&quot; start --log</Arguments></Exec></Actions>
-</Task>
-`;
+export const windowsLauncherVbs = ({ node, script }: Launcher) => `CreateObject("WScript.Shell").Run """${node}"" ""${script}"" start --log", 0, False\r\n`;
 
 export const launchdPlist = ({ node, script }: Launcher) => `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -52,17 +39,16 @@ Restart=on-failure
 WantedBy=default.target
 `;
 
-const taskXmlFile = path.join(DATA, 'cc-hush.task.xml');
+const vbsFile = path.join(DATA, 'start.vbs');
 const plistFile = path.join(os.homedir(), 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`);
 const unitFile = path.join(os.homedir(), '.config', 'systemd', 'user', SYSTEMD_UNIT);
 
 export function installService(launcher: Launcher): string {
   switch (process.platform) {
     case 'win32': {
-      const user = `${process.env.USERDOMAIN ?? os.hostname()}\\${os.userInfo().username}`;
-      fs.writeFileSync(taskXmlFile, '﻿' + windowsTaskXml(launcher, user), 'utf16le');
-      run('schtasks', ['/create', '/f', '/tn', TASK_NAME, '/xml', taskXmlFile]);
-      return `scheduled task "${TASK_NAME}" registered, runs at logon of ${user}`;
+      fs.writeFileSync(vbsFile, windowsLauncherVbs(launcher));
+      run('reg', ['add', RUN_KEY, '/v', RUN_VALUE, '/t', 'REG_SZ', '/d', `wscript.exe //B //Nologo "${vbsFile}"`, '/f']);
+      return `logon entry "${RUN_VALUE}" registered in ${RUN_KEY}, hidden launcher ${vbsFile}`;
     }
     case 'darwin': {
       fs.mkdirSync(path.dirname(plistFile), { recursive: true });
@@ -83,7 +69,7 @@ export function installService(launcher: Launcher): string {
 
 export function startService() {
   switch (process.platform) {
-    case 'win32': return run('schtasks', ['/run', '/tn', TASK_NAME]);
+    case 'win32': return run('wscript.exe', ['//B', '//Nologo', vbsFile]);
     case 'darwin': return run('launchctl', ['kickstart', `gui/${uid()}/${LAUNCHD_LABEL}`]);
     default: return run('systemctl', ['--user', 'start', SYSTEMD_UNIT]);
   }
@@ -91,7 +77,7 @@ export function startService() {
 
 export function uninstallService() {
   switch (process.platform) {
-    case 'win32': tryRun('schtasks', ['/delete', '/f', '/tn', TASK_NAME]); fs.rmSync(taskXmlFile, { force: true }); return;
+    case 'win32': tryRun('reg', ['delete', RUN_KEY, '/v', RUN_VALUE, '/f']); fs.rmSync(vbsFile, { force: true }); return;
     case 'darwin': tryRun('launchctl', ['bootout', `gui/${uid()}/${LAUNCHD_LABEL}`]); fs.rmSync(plistFile, { force: true }); return;
     default: tryRun('systemctl', ['--user', 'disable', '--now', SYSTEMD_UNIT]); fs.rmSync(unitFile, { force: true }); tryRun('systemctl', ['--user', 'daemon-reload']); return;
   }
