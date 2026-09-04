@@ -9,7 +9,8 @@ export const DATA_SOURCE_RE = /\b(psql|mysql|sqlite3|sqlplus|mongosh|curl|gh|wge
 const SQL_RE = /\b(select|insert|update|delete|alter|drop|truncate|create|merge)\b/i;
 
 const FILE_REFS: RegExp[] = [
-  /\b(?:bash|sh|zsh|source)\s+([^\s;&|<>]+)/g,
+  /\b(?:bash|sh|zsh|source|\.)\s+([^\s;&|<>]+)/g,
+  /(?:^|[;&|]\s*|\bsudo\s+)((?:\.{1,2}\/|\/)[^\s;&|<>]+)/gm,
   /\b(?:psql|sqlplus)\b[^;&|\n]*?\s-f\s*([^\s;&|<>]+)/g,
   /\b(?:psql|mysql|sqlite3|sqlplus|mongosh)\b[^;&|\n]*?<\s*([^\s;&|>]+)/g,
   /\bpython3?\s+([^\s;&|<>]+\.py)\b/g,
@@ -17,18 +18,21 @@ const FILE_REFS: RegExp[] = [
 ];
 
 /** Collect the command plus content of referenced local files (depth 1). */
-export function extract(toolName: string, input: Record<string, unknown>, cwd: string): { text: string; files: string[]; sqlish: boolean } {
+export type Extracted = { text: string; files: string[]; sqlish: boolean; uninspectable: string[] };
+
+export function extract(toolName: string, input: Record<string, unknown>, cwd: string): Extracted {
   if (toolName === 'Bash') {
     const cmd = String(input.command ?? '');
     const files: string[] = [];
+    const uninspectable: string[] = [];
     const parts: string[] = [cmd];
     const read = (rel: string) => {
       const p = path.resolve(cwd, rel.replace(/^["']|["']$/g, ''));
-      try {
-        if (fs.statSync(p).size > 1_000_000) return;
-        parts.push(fs.readFileSync(p, 'utf8'));
-        files.push(rel);
-      } catch { /* not local, skip */ }
+      let st: fs.Stats;
+      try { st = fs.statSync(p); } catch { return; /* not a local file */ }
+      if (!st.isFile()) return;
+      if (st.size > 1_000_000) { uninspectable.push(rel); return; }
+      try { parts.push(fs.readFileSync(p, 'utf8')); files.push(rel); } catch { uninspectable.push(rel); }
     };
     for (const re of FILE_REFS) for (const m of cmd.matchAll(re)) read(m[1]);
     for (const m of cmd.matchAll(/\bnpm\s+run\s+([^\s;&|]+)/g)) {
@@ -40,11 +44,29 @@ export function extract(toolName: string, input: Record<string, unknown>, cwd: s
     }
     const text = parts.join('\n');
     const sqlish = DATA_SOURCE_RE.test(cmd) || files.some((f) => /\.sql$/i.test(f));
-    return { text, files, sqlish };
+    return { text, files, sqlish, uninspectable };
   }
-  // MCP: sql/query/statement input fields
-  const text = ['sql', 'query', 'statement'].map((k) => input[k]).filter((v) => typeof v === 'string').join('\n');
-  return { text, files: [], sqlish: text.length > 0 };
+  // MCP: any sql/query/statement/command string field, at any depth
+  const found: string[] = [];
+  const walk = (v: unknown, key: string) => {
+    if (typeof v === 'string') { if (/sql|query|statement|command|script/i.test(key)) found.push(v); return; }
+    if (Array.isArray(v)) v.forEach((x) => walk(x, key));
+    else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, k);
+  };
+  walk(input, '');
+  const text = found.join('\n');
+  return { text, files: [], sqlish: text.length > 0, uninspectable: [] };
+}
+
+/** Remove SQL comments and string literals so structural checks (WHERE) cannot be spoofed.
+ *  Shell text wraps whole statements in quotes, so a quoted chunk that itself holds SQL keywords is kept. */
+export function stripSql(sql: string): string {
+  const literal = (m: string) => (SQL_RE.test(m) ? m : m[0] + m[0]);
+  return sql
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|\s)--\s[^\n]*/g, '$1')
+    .replace(/'(?:[^'\\]|\\.|'')*'/g, literal)
+    .replace(/"(?:[^"\\]|\\.)*"/g, (m) => (/^"[\w.]+"$/.test(m) ? m : literal(m)));
 }
 
 const ROOTS = new Set(['/', '/*', '~', '~/', '~/*', '$HOME', '$HOME/', '${HOME}', '${HOME}/', '/.', '~/.']);
@@ -76,7 +98,7 @@ const ASK_SHELL: [RegExp, string][] = [
 ];
 
 function forcePush(seg: string): Verdict {
-  const m = /\bgit\s+push\b(.*)$/s.exec(seg);
+  const m = /\bgit\b(?:\s+(?:-[Cc]\s+\S+|--?[\w-]+(?:=\S*)?))*\s+push\b(.*)$/s.exec(seg);
   if (!m) return null;
   const args = m[1];
   const force = /(?:^|\s)(?:--force(?:-with-lease)?|--force-if-includes|-[a-zA-Z]*f[a-zA-Z]*)(?:\s|$|=)/.test(args) || /(?:^|\s)\+\S+/.test(args);
@@ -87,7 +109,8 @@ function forcePush(seg: string): Verdict {
   return { decision: 'ask', reason: `Force push: ${seg.trim()}` };
 }
 
-function sqlVerdict(text: string): Verdict {
+function sqlVerdict(raw: string): Verdict {
+  const text = stripSql(raw);
   for (const stmt of text.split(/;/)) {
     if (/\b(drop)\s+(table|database|schema|index|view|column|constraint|sequence|type|user|role|function|procedure|trigger|materialized\s+view|extension|owned)\b/i.test(stmt))
       return { decision: 'deny', reason: `DROP statement: ${stmt.trim().slice(0, 120)}` };
@@ -132,9 +155,18 @@ export function piiColumns(sql: string, schema: Schema | null): Verdict {
   return null;
 }
 
+export const BROKEN_SCHEMA: Schema = { tables: {} };
+
+/** null: no schema configured. BROKEN_SCHEMA: file exists but cannot be read, SQL then asks. */
 export function loadSchema(projectDir: string | null): Schema | null {
   if (!projectDir) return null;
-  try { return JSON.parse(fs.readFileSync(path.join(projectDir, '.hush', 'schema.json'), 'utf8')); } catch { return null; }
+  const p = path.join(projectDir, '.hush', 'schema.json');
+  if (!fs.existsSync(p)) return null;
+  try {
+    const s = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (!s || typeof s.tables !== 'object') return BROKEN_SCHEMA;
+    return s;
+  } catch { return BROKEN_SCHEMA; }
 }
 
 /** Walk up from cwd to the directory holding .hush/. */
@@ -150,13 +182,15 @@ export function findProject(cwd: string | undefined): string | null {
 }
 
 export function guard(toolName: string, input: Record<string, unknown>, cwd: string, schema: Schema | null): Verdict {
-  const { text, files, sqlish } = extract(toolName, input, cwd);
+  const { text, files, sqlish, uninspectable } = extract(toolName, input, cwd);
   if (!text.trim()) return null;
   const where = files.length ? ` (in ${files.join(', ')})` : '';
   const d = destructive(text);
   if (d) return { ...d, reason: d.reason + where };
+  if (uninspectable.length) return { decision: 'ask', reason: `Script too large or unreadable to inspect: ${uninspectable.join(', ')}` };
   if (sqlish) {
-    const p = piiColumns(text, schema);
+    if (schema === BROKEN_SCHEMA) return { decision: 'ask', reason: '.hush/schema.json exists but is not valid JSON with a "tables" object, PII column guard is off until it is fixed.' };
+    const p = piiColumns(stripSql(text), schema);
     if (p) return { ...p, reason: p.reason + where };
   }
   return null;

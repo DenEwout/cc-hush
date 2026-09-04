@@ -23,6 +23,12 @@ try { machine = { ...machine, ...JSON.parse(fs.readFileSync(path.join(DATA, 'con
 const upstream = new URL(process.env.HUSH_UPSTREAM ?? machine.upstream);
 const device = process.env.HUSH_DEVICE ?? machine.device ?? (process.platform === 'win32' ? 'dml' : 'cpu');
 
+// ---------- local auth token for /hook, /debug/vault, /shutdown ----------
+const TOKEN_FILE = path.join(DATA, 'token');
+if (!fs.existsSync(TOKEN_FILE)) fs.writeFileSync(TOKEN_FILE, crypto.randomBytes(24).toString('hex'), { mode: 0o600 });
+const TOKEN = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
+const authed = (req: http.IncomingMessage) => req.headers['x-hush-token'] === TOKEN;
+
 // ---------- audit ----------
 const db = new DatabaseSync(path.join(DATA, 'audit.sqlite'));
 db.exec(`CREATE TABLE IF NOT EXISTS audit(ts TEXT, session_id TEXT, event TEXT, tool_name TEXT, label TEXT, count INTEGER, decision TEXT, latency_ms INTEGER)`);
@@ -36,7 +42,6 @@ const countLabels = (spans: { label: string }[]) => spans.reduce<Record<string, 
 
 // ---------- project policy ----------
 const sessionCwd = new Map<string, string>();
-let lastCwd: string | undefined;
 function policyFor(cwd: string | undefined): Policy {
   const dir = findProject(cwd);
   if (!dir) return DEFAULT_POLICY;
@@ -90,6 +95,9 @@ async function redactResultText(text: string, tool: { name?: string; input?: Rec
 
 export async function redactBody(body: any, allowlist: string[]): Promise<Record<string, number>> {
   const labels: Record<string, number> = {};
+  if (typeof body?.system === 'string') body.system = await scanText(body.system, allowlist, labels);
+  else if (Array.isArray(body?.system))
+    for (const b of body.system as Block[]) if (b.type === 'text' && typeof b.text === 'string') b.text = await scanText(b.text, allowlist, labels);
   if (!Array.isArray(body?.messages)) return labels;
   const uses = new Map<string, { name?: string; input?: Record<string, unknown> }>();
   for (const msg of body.messages) {
@@ -117,7 +125,7 @@ export async function redactBody(body: any, allowlist: string[]): Promise<Record
 async function handleHook(ev: any): Promise<unknown> {
   const t0 = Date.now();
   const session = ev.session_id ?? null;
-  if (ev.cwd) { sessionCwd.set(session, ev.cwd); lastCwd = ev.cwd; }
+  if (ev.cwd) sessionCwd.set(session, ev.cwd);
   const policy = policyFor(ev.cwd);
 
   if (ev.hook_event_name === 'UserPromptSubmit') {
@@ -142,6 +150,7 @@ async function handleHook(ev: any): Promise<unknown> {
           audit(session, 'PreToolUse', name, {}, 'deny', Date.now() - t0);
           return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'cc-hush: refusing to rehydrate PII tokens into a command that can send data off the machine. Ask the user to run this step.' } };
         }
+        // updatedInput applies on its own; no permissionDecision here, so the user's normal permission prompt still fires.
         input = r; out.updatedInput = input; rehydrated = true;
       }
     }
@@ -178,7 +187,8 @@ async function proxy(req: http.IncomingMessage, res: http.ServerResponse) {
       const parsed = JSON.parse(body.toString('utf8'));
       let sid: string | null = null;
       try { sid = JSON.parse(parsed.metadata?.user_id ?? '{}').session_id ?? null; } catch { /* no session in metadata */ }
-      const cwd = (sid && sessionCwd.get(sid)) || lastCwd;
+      // Unknown session: strictest policy (no allowlist). Never borrow another session's project policy.
+      const cwd = sid ? sessionCwd.get(sid) : undefined;
       const labels = await redactBody(parsed, policyFor(cwd).allowlist);
       body = Buffer.from(JSON.stringify(parsed));
       audit(sid, 'proxy', null, labels, 'redacted', Date.now() - t0);
@@ -204,6 +214,9 @@ const server = http.createServer(async (req, res) => {
   const url = req.url ?? '/';
   try {
     if (url === '/health') return json(res, 200, { ok: true, version: VERSION, model: modelReady() ? 'ready' : 'loading', device, upstream: upstream.href, vault: size(), pid: process.pid });
+    if (url === '/debug/vault' || url === '/shutdown' || url === '/hook') {
+      if (!authed(req)) return json(res, 401, { error: `cc-hush: send header x-hush-token from ${TOKEN_FILE}` });
+    }
     if (url === '/debug/vault') return json(res, 200, dump());
     if (url === '/shutdown' && req.method === 'POST') { json(res, 200, { bye: true }); setTimeout(() => process.exit(0), 50); return; }
     if (url === '/hook' && req.method === 'POST') {

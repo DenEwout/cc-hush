@@ -24,4 +24,4 @@ Run these steps in order. `${CLAUDE_PLUGIN_ROOT}` is the plugin install director
 
 7. **Check the guard fires.** Ask Claude to run `git push --force origin main` in a scratch repo. It must be denied with a `cc-hush:` reason. If nothing happens (seen on Windows with plugin hooks on tool events, issue #34573), copy the `UserPromptSubmit` and `PreToolUse` entries from `${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json` into `~/.claude/settings.json` under `hooks`, replacing `${CLAUDE_PLUGIN_ROOT}` with the absolute plugin path.
 
-Verify: `curl 127.0.0.1:47831/debug/vault` shows the token map after a prompt containing an email address.
+Verify: `curl -H "x-hush-token: $(cat ${CLAUDE_PLUGIN_DATA}/token)" 127.0.0.1:47831/debug/vault` shows the token map after a prompt containing an email address.

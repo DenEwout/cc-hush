@@ -90,7 +90,8 @@ function softmaxMax(row: Float32Array | number[]): [number, number] {
 
 export async function modelDetect(text: string): Promise<Span[]> {
   if (!model) await loading;
-  const inputs = tokenizer([text], { padding: true, truncation: true });
+  const inputs = tokenizer([text], { padding: true, truncation: false });
+  if (inputs.input_ids.dims[1] >= 128_000) throw new Error('text exceeds model context, refusing to scan partially');
   const { logits } = await model(inputs);
   const ids: number[] = inputs.input_ids[0].tolist().map(Number);
   const id2label: Record<number, string> = model.config.id2label;
@@ -136,22 +137,26 @@ export async function modelDetect(text: string): Promise<Span[]> {
 // ---------- merge ----------
 
 export function mergeSpans(spans: Span[], text: string, allowlist: string[]): Span[] {
-  const allow = allowlist.map((a) => a.toLowerCase()).filter(Boolean);
+  const allow = allowlist.map((a) => a.trim().toLowerCase()).filter(Boolean);
+  // A span is allowlisted when it IS an allowlisted term, or a piece of one ("Van Gossum" of "Ewout Van Gossum").
+  // Containing a term is not enough: "alice@qmino.com" stays PII when only "qmino.com" is allowlisted.
   const kept = spans
     .filter((s) => s.end > s.start)
     .filter((s) => {
-      const v = text.slice(s.start, s.end).toLowerCase();
-      return !allow.some((a) => v.includes(a) || (v.length >= 3 && a.includes(v)));
+      const v = text.slice(s.start, s.end).trim().toLowerCase();
+      return !allow.some((a) => v === a || (v.length >= 3 && a.includes(v)));
     })
     .sort((a, b) => a.start - b.start || b.score - a.score);
+  // Overlapping spans become one span covering their union; the label comes from the highest score.
   const out: Span[] = [];
   for (const s of kept) {
     const last = out[out.length - 1];
     if (last && s.start < last.end) {
-      if (s.score > last.score) out[out.length - 1] = s;
+      last.end = Math.max(last.end, s.end);
+      if (s.score > last.score) { last.label = s.label; last.score = s.score; }
       continue;
     }
-    out.push(s);
+    out.push({ ...s });
   }
   return out;
 }

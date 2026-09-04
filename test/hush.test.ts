@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { regexDetect, mergeSpans, mcpKeyPass } from '../daemon/detect.ts';
-import { destructive, piiColumns, guard, extract } from '../daemon/guard.ts';
+import { destructive, piiColumns, guard, extract, loadSchema, BROKEN_SCHEMA } from '../daemon/guard.ts';
 import { tokenize, applySpans, redactKnown, rehydrate, isWhitelisted, DEFAULT_POLICY } from '../daemon/vault.ts';
 
 const labels = (t: string) => regexDetect(t).map((s) => [t.slice(s.start, s.end), s.label]);
@@ -31,6 +31,12 @@ test('merge: overlap keeps highest score, allowlist drops', () => {
   assert.equal(mergeSpans(spans, t, []).length, 2);
   assert.equal(mergeSpans(spans, t, ['qmino.com']).length, 1);
   assert.equal(mergeSpans(spans, t, ['Ewout Van Gossum', 'qmino.com']).length, 0);
+  // containing an allowlisted term is not enough
+  const mail = 'alice@qmino.com';
+  assert.equal(mergeSpans([{ start: 0, end: 15, label: 'private_email', score: 0.9 }], mail, ['qmino.com']).length, 1);
+  // overlapping spans merge into their union
+  const u = mergeSpans([{ start: 0, end: 10, label: 'private_person', score: 0.9 }, { start: 5, end: 16, label: 'private_person', score: 0.7 }], t, []);
+  assert.deepEqual([u[0].start, u[0].end], [0, 16]);
 });
 
 test('vault: stable tokens, round trip, known-value redaction', () => {
@@ -72,6 +78,9 @@ test('guard: destructive tiers', () => {
   assert.equal(destructive('truncate -s 0 log.txt'), null);
   assert.equal(destructive('psql -c "UPDATE customer SET x=1"')?.decision, 'ask');
   assert.equal(destructive('psql -c "UPDATE customer SET x=1 WHERE id=3"'), null);
+  assert.equal(destructive("psql -c \"UPDATE t SET x=1 /* where */\"")?.decision, 'ask');
+  assert.equal(destructive("psql -c \"UPDATE t SET note='where' -- where\"")?.decision, 'ask');
+  assert.equal(destructive('git -C repo push --force origin main')?.decision, 'deny');
   assert.equal(destructive('psql -c "DELETE FROM customer"')?.decision, 'ask');
   assert.equal(destructive('psql -c "ALTER TABLE customer ADD COLUMN x int"')?.decision, 'ask');
   assert.equal(destructive('git reset --hard HEAD~1')?.decision, 'ask');
@@ -105,6 +114,15 @@ test('guard: referenced script file and npm script', () => {
   assert.equal(guard('Bash', { command: 'npm run nuke' }, dir, schema)?.decision, 'deny');
   assert.equal(guard('Bash', { command: 'cat q.sql' }, dir, schema), null);
   assert.equal(guard('mcp__db__query', { sql: 'select email from customer' }, dir, schema)?.decision, 'ask');
+  assert.equal(guard('mcp__db__query', { args: { params: { sqlText: 'drop table x' } } }, dir, schema)?.decision, 'deny');
+  fs.writeFileSync(path.join(dir, 'run.sh'), 'rm -rf /\n');
+  assert.equal(guard('Bash', { command: './run.sh' }, dir, schema)?.decision, 'deny');
+  fs.writeFileSync(path.join(dir, 'big.sh'), 'x'.repeat(1_100_000));
+  assert.equal(guard('Bash', { command: 'bash big.sh' }, dir, schema)?.decision, 'ask');
+  fs.writeFileSync(path.join(dir, '.hush.json'), '{');
+  fs.mkdirSync(path.join(dir, '.hush')); fs.writeFileSync(path.join(dir, '.hush', 'schema.json'), '{ broken');
+  assert.equal(loadSchema(dir), BROKEN_SCHEMA);
+  assert.equal(guard('Bash', { command: 'psql -c "select 1"' }, dir, BROKEN_SCHEMA)?.decision, 'ask');
   assert.equal(extract('Bash', { command: 'echo select email' }, dir).sqlish, false);
 });
 

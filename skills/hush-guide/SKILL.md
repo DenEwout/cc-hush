@@ -27,7 +27,7 @@ cc-hush sits between Claude Code and the Anthropic API. Everything you see has a
 ## Status
 
 - `curl 127.0.0.1:47831/health` : version, model state, device, upstream, vault size.
-- `curl 127.0.0.1:47831/debug/vault` : the token map (loopback only). Do not paste its output back into the conversation.
+- `curl -H "x-hush-token: $(cat ~/.claude/plugins/data/hush/token)" 127.0.0.1:47831/debug/vault` : the token map (loopback only, token file at `${CLAUDE_PLUGIN_DATA}/token`). Do not paste its output back into the conversation.
 - Log: `${CLAUDE_PLUGIN_DATA}/daemon.log`. Audit: `${CLAUDE_PLUGIN_DATA}/audit.sqlite`, labels and counts only.
 - `cc-hush: privacy daemon unavailable ... blocked` : the daemon is down; every hooked tool call and prompt is blocked until it is back. Run the `hush-setup` skill step 3.
 - If the API is unreachable, the daemon is down. Same fix.

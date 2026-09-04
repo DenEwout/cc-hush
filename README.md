@@ -65,7 +65,7 @@ Machine config at `${CLAUDE_PLUGIN_DATA}/config.json` (default `~/.claude/plugin
 }
 ```
 
-- `allowlist`: terms never treated as PII.
+- `allowlist`: terms never treated as PII. Exact match or a piece of a term; `alice@qmino.com` is still redacted when only `qmino.com` is listed.
 - `allowPii.mcpServers`: MCP server name prefixes whose tool inputs get real values. Everything else receives the literal token.
 - `allowPii.tools`: built-in tools that get real values. Default when the file is absent: `Write`, `Edit`, `MultiEdit`. Adding `Bash` is possible but a rehydrated command containing `curl`, `wget`, `ssh`, `gh`, `git push` or a cloud CLI is denied.
 
@@ -98,14 +98,20 @@ Scripts referenced from the command (`bash x.sh`, `psql -f x.sql`, `mysql < x.sq
 ## Endpoints
 
 - `GET /health` version, model state, device, upstream, vault size.
-- `GET /debug/vault` the token map. Loopback only.
+- `GET /debug/vault` the token map.
 - `POST /shutdown` stop the daemon (used on version upgrade).
 - `POST /hook` hook endpoint.
+
+The last three require the header `x-hush-token` with the contents of `${CLAUDE_PLUGIN_DATA}/token`:
+
+```
+curl -H "x-hush-token: $(cat ~/.claude/plugins/data/hush/token)" 127.0.0.1:47831/debug/vault
+```
 - Anything else is proxied to `upstream`.
 
 ## Storage
 
-`${CLAUDE_PLUGIN_DATA}/`: `models/`, `config.json`, `audit.sqlite` (`audit(ts, session_id, event, tool_name, label, count, decision, latency_ms)`, never values), `daemon.log`.
+`${CLAUDE_PLUGIN_DATA}/`: `models/`, `config.json`, `token`, `audit.sqlite` (`audit(ts, session_id, event, tool_name, label, count, decision, latency_ms)`, never values), `daemon.log`.
 
 ## Limits
 

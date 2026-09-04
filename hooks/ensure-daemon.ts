@@ -12,8 +12,13 @@ const BASE = 'http://127.0.0.1:47831';
 async function health(): Promise<{ version: string; model: string } | null> {
   try {
     const r = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(1500) });
-    return r.ok ? await r.json() : null;
+    if (!r.ok) return null;
+    const h = await r.json();
+    return h?.ok === true && typeof h.version === 'string' ? h : null;
   } catch { return null; }
+}
+function token(): string {
+  try { return fs.readFileSync(path.join(DATA, 'token'), 'utf8').trim(); } catch { return ''; }
 }
 
 function start() {
@@ -31,7 +36,7 @@ if (!fs.existsSync(path.join(ROOT, 'node_modules', '@huggingface', 'transformers
 } else {
   let h = await health();
   if (h && h.version !== VERSION) {
-    await fetch(`${BASE}/shutdown`, { method: 'POST' }).catch(() => {});
+    await fetch(`${BASE}/shutdown`, { method: 'POST', headers: { 'x-hush-token': token() } }).catch(() => {});
     await new Promise((r) => setTimeout(r, 500));
     h = null;
   }
@@ -40,6 +45,10 @@ if (!fs.existsSync(path.join(ROOT, 'node_modules', '@huggingface', 'transformers
     ? `cc-hush daemon v${h.version} running (model ${h.model}).`
     : `cc-hush daemon starting; check ${path.join(DATA, 'daemon.log')} if /health stays down.`;
 }
+
+const base = process.env.ANTHROPIC_BASE_URL ?? '';
+if (!/^http:\/\/(127\.0\.0\.1|localhost):47831\/?$/.test(base))
+  note += `\nWARNING: ANTHROPIC_BASE_URL is ${base ? `"${base}"` : 'not set'}; API traffic is NOT going through the cc-hush proxy. Set it to http://127.0.0.1:47831 in ~/.claude/settings.json env and restart. Tell the user this first.`;
 
 process.stdout.write(JSON.stringify({
   hookSpecificOutput: {
