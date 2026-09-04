@@ -1,0 +1,10 @@
+{
+  "name": "hush",
+  "version": "0.1.0",
+  "description": "Privacy plugin: keeps PII and secrets out of the Anthropic API and third-party tools, blocks destructive commands, guards PII columns, audits locally.",
+  "author": { "name": "Ewout Van Gossum" },
+  "homepage": "https://github.com/DenEwout/cc-hush",
+  "repository": "https://github.com/DenEwout/cc-hush",
+  "license": "MIT",
+  "keywords": ["privacy", "pii", "security", "proxy", "redaction"]
+}

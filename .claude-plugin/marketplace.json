@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "cc-hush",
+  "description": "Privacy plugin for Claude Code: local PII/secret redaction proxy, destructive command guard, PII column guard, audit log.",
+  "owner": { "name": "Ewout Van Gossum", "url": "https://github.com/DenEwout" },
+  "plugins": [
+    {
+      "name": "hush",
+      "description": "Keeps PII and secrets out of the Anthropic API and third-party tools, blocks destructive commands, guards PII columns, audits locally.",
+      "source": "./",
+      "category": "security"
+    }
+  ]
+}
