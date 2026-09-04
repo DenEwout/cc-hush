@@ -39,7 +39,11 @@ const SECRET_ASSIGNMENT = /\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth
 
 type Rule = { re: RegExp; label: string; checksum?: (match: string) => boolean; valueGroup?: number };
 
+// Deterministic backstop: the model misses addresses that do not look like a real person's (e2e.person@example.org).
+const EMAIL = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b/g;
+
 const RULES: Rule[] = [
+  { label: 'private_email', re: EMAIL },
   { label: 'account_number', re: RIJKSREGISTERNUMMER, checksum: isRijksregisternummer },
   { label: 'account_number', re: BELGIAN_IBAN, checksum: isIban },
   { label: 'account_number', re: BELGIAN_VAT },

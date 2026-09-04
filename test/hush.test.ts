@@ -19,6 +19,9 @@ test('regex: Belgian identifiers and secrets', () => {
   assert.deepEqual(labels('key AKIAIOSFODNN7EXAMPLE'), [['AKIAIOSFODNN7EXAMPLE', 'secret']]);
   assert.deepEqual(labels('api_key = "abcdefghijklmnop1234"'), [['abcdefghijklmnop1234', 'secret']]);
   assert.deepEqual(labels('-----BEGIN RSA PRIVATE KEY-----')[0][1], 'secret');
+  assert.deepEqual(labels('Requester: e2e.person@example.org.'), [['e2e.person@example.org', 'private_email']]);
+  assert.deepEqual(labels('mail first.last+tag@sub.example.co.uk now'), [['first.last+tag@sub.example.co.uk', 'private_email']]);
+  assert.deepEqual(labels('not an address: foo@bar, @handle, a@b.c'), []);
 });
 
 test('merge: overlap keeps highest score, allowlist drops', () => {

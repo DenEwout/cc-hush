@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const DATA = process.env.HUSH_DATA ?? path.join(os.homedir(), '.cc-hush');
-const HOOK_URL = 'http://127.0.0.1:47831/hook';
+const HOOK_URL = `http://127.0.0.1:${process.env.HUSH_PORT ?? 47831}/hook`;
 const DAEMON_TIMEOUT_MS = 25_000;
 const EXIT_CODE_BLOCK = 2;
 

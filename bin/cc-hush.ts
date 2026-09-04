@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
+import { execFileSync } from 'node:child_process';
 import { BASE_URL, CONFIG_FILE, DATA, LOG_FILE, TOKEN_FILE } from '../daemon/paths.ts';
 import { loadModel } from '../daemon/detect.ts';
 import { claudeSettingsFile, configuredBaseUrl, installService, mergeBaseUrl, startService, uninstallService } from '../daemon/service.ts';
@@ -66,6 +67,20 @@ async function planClaudeSettings() {
   }
 }
 
+const claudePlugin = (...args: string[]) => execFileSync('claude', ['plugin', ...args], { stdio: 'pipe', encoding: 'utf8' });
+const firstLine = (error: unknown) => String((error as { stderr?: string }).stderr || (error as Error).message).trim().split('\n')[0];
+
+function installPlugin(): string {
+  try {
+    // A marketplace named cc-hush may already be declared locally (a checkout); installing from it is still right.
+    try { claudePlugin('marketplace', 'add', 'DenEwout/cc-hush'); } catch (error) { if (!/already|differs/i.test(firstLine(error))) throw error; }
+    claudePlugin('install', 'hush@cc-hush');
+    return 'plugin hush installed. Restart Claude Code.';
+  } catch (error) {
+    return `plugin not installed (${firstLine(error)}). Run: claude plugin marketplace add DenEwout/cc-hush && claude plugin install hush@cc-hush`;
+  }
+}
+
 const launcher = { node: process.execPath, script: import.meta.filename };
 
 switch (command) {
@@ -76,7 +91,7 @@ switch (command) {
       process.stdout.write = process.stderr.write = ((chunk: string | Uint8Array) => { fs.writeSync(log, chunk); return true; }) as typeof process.stdout.write;
     }
     for (const event of ['uncaughtException', 'unhandledRejection'] as const) process.on(event, (error) => { console.error(`[hush] ${event}, exiting:`, error); process.exit(1); });
-    await import('../daemon/server.ts');
+    (await import('../daemon/server.ts')).startDaemon();
     break;
   }
   case 'install': {
@@ -92,12 +107,13 @@ switch (command) {
     console.log(running ? `daemon v${running.version} up on ${BASE_URL} (model ${running.model}, upstream ${running.upstream})` : `daemon not reachable yet; check ${LOG_FILE}`);
     if (settings.text) fs.writeFileSync(claudeSettingsFile(), settings.text);
     console.log(settings.note);
-    console.log('then: claude plugin marketplace add DenEwout/cc-hush && claude plugin install hush');
+    console.log(installPlugin());
     process.exit(0);
   }
   case 'uninstall':
     await stop();
     uninstallService();
+    try { claudePlugin('uninstall', 'hush@cc-hush'); console.log('plugin hush removed'); } catch { console.log('plugin hush was not installed'); }
     console.log(`startup service removed. ${DATA} kept; delete it by hand to drop the model, token and audit log.`);
     break;
   case 'stop':

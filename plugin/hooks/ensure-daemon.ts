@@ -4,10 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 
 const DATA = process.env.HUSH_DATA ?? path.join(os.homedir(), '.cc-hush');
-const BASE_URL = 'http://127.0.0.1:47831';
+const PORT = process.env.HUSH_PORT ?? '47831';
+const BASE_URL = `http://127.0.0.1:${PORT}`;
 const HEALTH_TIMEOUT_MS = 1500;
 const STARTUP_WAIT_MS = 1500;
-const PROXY_URL = /^http:\/\/(127\.0\.0\.1|localhost):47831\/?$/;
+const PROXY_URL = new RegExp(`^http://(127\\.0\\.0\\.1|localhost):${PORT}/?$`);
 const INSTALL_HINT = 'npm i -g cc-hush && cc-hush install';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

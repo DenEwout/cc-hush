@@ -34,16 +34,15 @@ Node 24 or newer.
 ```
 npm i -g cc-hush
 cc-hush install
-claude plugin marketplace add DenEwout/cc-hush
-claude plugin install hush
 ```
 
-`cc-hush install` does four things, and is safe to re-run after `npm i -g cc-hush@latest` or a Node upgrade:
+`cc-hush install` does five things, and is safe to re-run after `npm i -g cc-hush@latest` or a Node upgrade:
 
 1. Downloads the model into `~/.cc-hush/models` with progress.
 2. Registers a startup service for your user: a Windows logon entry (`HKCU\...\CurrentVersion\Run`, started hidden through `~/.cc-hush/start.vbs`), a macOS launch agent (`~/Library/LaunchAgents/com.cc-hush.daemon.plist`), or a Linux systemd user unit (`~/.config/systemd/user/cc-hush.service`; headless boxes also need `loginctl enable-linger`).
 3. Stops any running daemon and starts the new one through the service, waits for `/health`.
 4. Sets `ANTHROPIC_BASE_URL` to `http://127.0.0.1:47831` in `~/.claude/settings.json` (`CLAUDE_CONFIG_DIR` respected). If the variable already points at another proxy, install asks whether to chain it: answer yes and that URL becomes `upstream` in `~/.cc-hush/config.json`, so traffic goes Claude Code, cc-hush, your proxy, Anthropic. Answer no, or run non-interactively, and the setting is left alone with instructions printed.
+5. Installs the `hush` plugin through `claude plugin marketplace add DenEwout/cc-hush` and `claude plugin install hush@cc-hush` when the `claude` CLI is on PATH. Otherwise it prints those two commands.
 
 Then restart Claude Code. The plugin's SessionStart hook reports `cc-hush daemon vX running (model ready)`. If the service is not running the hook starts `cc-hush start` itself and tells you to re-run `cc-hush install`.
 
@@ -52,9 +51,8 @@ Other commands: `cc-hush status`, `cc-hush stop`, `cc-hush start` (foreground; `
 ### Uninstall
 
 ```
-cc-hush uninstall        # stops the daemon, removes the startup service
+cc-hush uninstall        # stops the daemon, removes the startup service and the plugin
 npm rm -g cc-hush
-claude plugin uninstall hush
 ```
 
 `~/.cc-hush` (model, token, audit log) is kept; delete it by hand. Remove the `ANTHROPIC_BASE_URL` line from `~/.claude/settings.json`.
@@ -144,9 +142,12 @@ curl -H "x-hush-token: $(cat ~/.cc-hush/token)" 127.0.0.1:47831/debug/vault
 
 ```
 npm install
-npm test
-HUSH_UPSTREAM=http://127.0.0.1:47999 HUSH_DATA=/tmp/hush node bin/cc-hush.ts start
+npm test              # unit tests plus proxy and hook integration tests against a fake downstream proxy, no model needed
+npm run test:e2e      # opt-in: runs the real `claude -p` through a real daemon with your own credentials, two Haiku calls
+HUSH_UPSTREAM=http://127.0.0.1:47999 HUSH_DATA=/tmp/hush HUSH_PORT=47832 node bin/cc-hush.ts start
 ```
+
+The integration tests start `startDaemon()` on an ephemeral port with a stub detector and a fake upstream that records what it received, so path prefixing, header passthrough, streaming, 429 passthrough, abandoned requests and the hook protocol are all checked without the 917 MB model. The e2e test copies `.credentials.json` into a temporary `CLAUDE_CONFIG_DIR`, points `ANTHROPIC_BASE_URL` and the plugin hooks at a daemon on a free port, and asserts on the daemon's audit log.
 
 Repo layout: `bin/` and `daemon/` are the npm package (see `files` in `package.json`); `plugin/` is the Claude Code plugin, referenced from `.claude-plugin/marketplace.json`. To try the plugin from a checkout: `claude plugin marketplace add /path/to/cc-hush`.
 

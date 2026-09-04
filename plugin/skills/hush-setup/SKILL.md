@@ -12,7 +12,7 @@ The daemon is an npm package, separate from this plugin. The plugin only ships h
    npm i -g cc-hush
    cc-hush install
    ```
-   `install` downloads `openai/privacy-filter` (q4, about 917 MB) into `~/.cc-hush/models`, registers a startup service (Windows per-user Run key with a hidden launcher, macOS launch agent, Linux systemd user unit), starts the daemon and sets `ANTHROPIC_BASE_URL` to `http://127.0.0.1:47831` in `~/.claude/settings.json`. Re-run it after `npm i -g cc-hush@latest` or a Node upgrade; it is idempotent.
+   `install` downloads `openai/privacy-filter` (q4, about 917 MB) into `~/.cc-hush/models`, registers a startup service (Windows per-user Run key with a hidden launcher, macOS launch agent, Linux systemd user unit), starts the daemon, sets `ANTHROPIC_BASE_URL` to `http://127.0.0.1:47831` in `~/.claude/settings.json` and installs this plugin through `claude plugin` when the `claude` CLI is on PATH. Re-run it after `npm i -g cc-hush@latest` or a Node upgrade; it is idempotent.
 2. **Existing proxy.** When `ANTHROPIC_BASE_URL` already holds another value (for example a caveman proxy on `http://127.0.0.1:8787/w/claude`), `install` asks whether to chain it. Yes writes it as `upstream` into `~/.cc-hush/config.json` and points `ANTHROPIC_BASE_URL` at cc-hush. Non-interactive runs skip the question and leave the setting alone; then do it by hand:
    ```json
    { "upstream": "http://127.0.0.1:8787/w/claude" }
@@ -24,4 +24,4 @@ The daemon is an npm package, separate from this plugin. The plugin only ships h
 
 Verify: `cc-hush status` shows `"model":"ready"`; `curl -H "x-hush-token: $(cat ~/.cc-hush/token)" 127.0.0.1:47831/debug/vault` shows the token map after a prompt containing an email address.
 
-Remove: `cc-hush uninstall` stops the daemon and removes the startup service. `~/.cc-hush` (model, token, audit log) stays until deleted by hand. Then `npm rm -g cc-hush`, `claude plugin uninstall hush` and drop the `ANTHROPIC_BASE_URL` line from settings.
+Remove: `cc-hush uninstall` stops the daemon, removes the startup service and uninstalls this plugin. `~/.cc-hush` (model, token, audit log) stays until deleted by hand. Then `npm rm -g cc-hush` and drop the `ANTHROPIC_BASE_URL` line from settings.

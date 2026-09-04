@@ -170,8 +170,13 @@ cc-hush/
   daemon/detect.ts         regex + model, span merge, allowlist, MCP key pass
   daemon/vault.ts          tokenization, rehydration, whitelist check
   daemon/guard.ts          SQL extraction, destructive tiers, PII column match
+  daemon/redaction.ts      RequestRedaction: which blocks get the model, regex or vault pass; memo of in-flight and finished scans
   daemon/service.ts        startup service per OS (HKCU Run key + hidden wscript launcher, launchd agent, systemd user unit), settings.json merge
-  daemon/paths.ts          ~/.cc-hush, port, token and log file
+  daemon/paths.ts          ~/.cc-hush, port (HUSH_PORT), token and log file
+  test/hush.test.ts        unit: regex, vault, guard, chunking, settings merge, launcher templates
+  test/proxy.test.ts       integration: startDaemon on an ephemeral port, stub detector, fake downstream proxy
+  test/hooks.test.ts       integration: hook.ts and ensure-daemon.ts as child processes against that daemon
+  test/e2e/                opt-in: real `claude -p` with the machine's credentials through a real daemon
   .claude-plugin/marketplace.json   source: ./plugin
   plugin/.claude-plugin/plugin.json
   plugin/hooks/hooks.json
