@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { BASE_URL, DATA } from './paths.ts';
+import { BASE_URL, CONFIG_FILE, DATA } from './paths.ts';
 
 export type Launcher = { node: string; script: string };
 
@@ -99,11 +99,15 @@ export function uninstallService() {
 
 export const claudeSettingsFile = () => path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'), 'settings.json');
 
-export function mergeBaseUrl(settingsJson: string | undefined): { text?: string; note: string } {
+export const configuredBaseUrl = (settingsJson: string | undefined): string | undefined => (settingsJson ? JSON.parse(settingsJson) : {}).env?.ANTHROPIC_BASE_URL;
+
+export function mergeBaseUrl(settingsJson: string | undefined, chain = false): { text?: string; upstream?: string; note: string } {
   const settings = settingsJson ? JSON.parse(settingsJson) : {};
   const current = settings.env?.ANTHROPIC_BASE_URL;
   if (current === BASE_URL) return { note: `ANTHROPIC_BASE_URL already points at ${BASE_URL}.` };
-  if (current) return { note: `ANTHROPIC_BASE_URL is "${current}", left unchanged. If that is another proxy, put it as "upstream" in ${path.join(DATA, 'config.json')} and set ANTHROPIC_BASE_URL to ${BASE_URL} in ${claudeSettingsFile()}. Until then nothing is redacted.` };
+  if (current && !chain) return { note: `ANTHROPIC_BASE_URL is "${current}", left unchanged. To chain it, put it as "upstream" in ${CONFIG_FILE} and set ANTHROPIC_BASE_URL to ${BASE_URL} in ${claudeSettingsFile()}. Until then nothing is redacted.` };
   settings.env = { ...settings.env, ANTHROPIC_BASE_URL: BASE_URL };
-  return { text: JSON.stringify(settings, null, 2) + '\n', note: `ANTHROPIC_BASE_URL set to ${BASE_URL} in ${claudeSettingsFile()}. Restart Claude Code.` };
+  const text = JSON.stringify(settings, null, 2) + '\n';
+  if (current) return { text, upstream: current, note: `ANTHROPIC_BASE_URL set to ${BASE_URL} in ${claudeSettingsFile()}; the daemon forwards to ${current} (upstream in ${CONFIG_FILE}). Restart Claude Code.` };
+  return { text, note: `ANTHROPIC_BASE_URL set to ${BASE_URL} in ${claudeSettingsFile()}. Restart Claude Code.` };
 }

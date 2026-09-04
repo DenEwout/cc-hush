@@ -141,6 +141,10 @@ test('install: ANTHROPIC_BASE_URL merge into settings.json', async () => {
   const other = mergeBaseUrl(JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787/w/claude' } }));
   assert.equal(other.text, undefined);
   assert.match(other.note, /left unchanged/);
+  const chained = mergeBaseUrl(JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787/w/claude' } }), true);
+  assert.equal(JSON.parse(chained.text!).env.ANTHROPIC_BASE_URL, proxy);
+  assert.equal(chained.upstream, 'http://127.0.0.1:8787/w/claude');
+  assert.equal(mergeBaseUrl(undefined, true).upstream, undefined);
   assert.throws(() => mergeBaseUrl('{ not json'));
   const launcher = { node: '/usr/local/bin/node', script: '/usr/local/lib/node_modules/cc-hush/bin/cc-hush.ts' };
   assert.match(windowsTaskXml(launcher, 'DOM\\me'), /<Arguments>&quot;\/usr\/local\/lib\/node_modules\/cc-hush\/bin\/cc-hush.ts&quot; start --log<\/Arguments>/);

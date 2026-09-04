@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { detect, loadModel, modelReady, mcpKeyPassText } from './detect.ts';
 import { applySpans, redactKnown, rehydrateDeep, isWhitelisted, dump, size, DEFAULT_POLICY, type Policy, type Span } from './vault.ts';
 import { guard, findProject, loadSchema, DATA_SOURCE_RE } from './guard.ts';
-import { DATA, PORT, TOKEN_FILE } from './paths.ts';
+import { CONFIG_FILE, DATA, PORT, TOKEN_FILE } from './paths.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const VERSION: string = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -18,7 +18,7 @@ fs.mkdirSync(path.join(DATA, 'models'), { recursive: true });
 
 const readJson = (file: string) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return undefined; } };
 
-const machineConfig = readJson(path.join(DATA, 'config.json')) ?? {};
+const machineConfig = readJson(CONFIG_FILE) ?? {};
 const upstream = new URL(process.env.HUSH_UPSTREAM ?? machineConfig.upstream ?? 'https://api.anthropic.com');
 const defaultDevice = process.platform === 'win32' ? 'dml' : 'cpu';
 const device: string = process.env.HUSH_DEVICE ?? machineConfig.device ?? defaultDevice;

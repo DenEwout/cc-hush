@@ -218,7 +218,7 @@ mkdir -p ~/.cc-hush &amp;&amp; mv ~/.claude/plugins/data/hush-cc-hush/models ~/.
 cc-hush install
 cc-hush status
 schtasks /query /tn cc-hush /v /fo list</pre>
-              <div class="check pass"><b>Pass</b><span>Model files print <code>done</code> without a download. Install says <code>scheduled task "cc-hush" registered, runs at logon of AzureAD\EwoutVanGossum</code>, then <code>daemon v0.2.0 up on http://127.0.0.1:47831 (model ready)</code>, then that <code>ANTHROPIC_BASE_URL</code> is <code>http://127.0.0.1:8787/w/claude</code> and was left unchanged. <code>schtasks</code> shows Status: Running. No console window appeared.</span></div>
+              <div class="check pass"><b>Pass</b><span>Model files print <code>done</code> without a download. Install says <code>scheduled task "cc-hush" registered, runs at logon of AzureAD\EwoutVanGossum</code>, the chain question (next step), then <code>daemon v0.2.0 up on http://127.0.0.1:47831 (model ready, upstream http://127.0.0.1:8787/w/claude)</code>, then that <code>ANTHROPIC_BASE_URL</code> now points at cc-hush. <code>schtasks</code> shows Status: Running. No console window appeared.</span></div>
               <div class="check fail"><b>If not</b><span><code>schtasks</code> rejects the XML: check <code>~/.cc-hush/cc-hush.task.xml</code>, the <code>UserId</code> must be <code>AzureAD\EwoutVanGossum</code>. Task registered but daemon never up and <code>daemon.log</code> empty: the S4U logon type is refused for this account ("has not been granted the requested logon type"). Run <code>cc-hush start --log</code> by hand to keep working and open an issue to switch the task to an interactive logon with a hidden launcher. <code>daemon.log</code> says port in use: step 1 was skipped. A console window flashing at logon is the same S4U problem.</span></div>
             </div>
           </details>
@@ -226,12 +226,11 @@ schtasks /query /tn cc-hush /v /fo list</pre>
           <details class="step" id="s1-3">
             <summary><input type="checkbox" aria-label="Done"><div><div class="title">Chain the caveman proxy behind hush</div><div class="sub">Claude Code → hush → caveman → Anthropic</div></div><div class="tags"></div></summary>
             <div class="body">
-              <pre class="cmd">echo '{ "upstream": "http://127.0.0.1:8787/w/claude" }' &gt; ~/.cc-hush/config.json
-cc-hush install                       # re-run: restarts the daemon with the new upstream
-cc-hush status</pre>
-              <p class="note">Then set <code>ANTHROPIC_BASE_URL</code> to <code>http://127.0.0.1:47831</code> in <code>~/.claude/settings.json</code> yourself; install refuses to overwrite a value it did not put there. Caveman now only ever sees redacted text.</p>
-              <div class="check pass"><b>Pass</b><span><code>status</code> shows <code>"upstream":"http://127.0.0.1:8787/w/claude"</code> and <code>"device":"dml"</code>. The caveman proxy is running on 8787.</span></div>
-              <div class="check fail"><b>If not</b><span>Upstream unchanged: the daemon did not restart; <code>cc-hush stop</code> then <code>schtasks /run /tn cc-hush</code>. <code>"device":"cpu"</code> on this machine means DirectML failed to load; see phase 2.</span></div>
+              <p class="note">Part of step 2: install sees <code>ANTHROPIC_BASE_URL</code> is <code>http://127.0.0.1:8787/w/claude</code> and asks <code>Chain it behind cc-hush? [Y/n]</code>. Answer Y. It writes <code>upstream</code> into <code>~/.cc-hush/config.json</code> before starting the daemon and repoints <code>ANTHROPIC_BASE_URL</code> once the daemon is up. Caveman then only ever sees redacted text.</p>
+              <pre class="cmd">cc-hush status
+cat ~/.cc-hush/config.json</pre>
+              <div class="check pass"><b>Pass</b><span><code>status</code> shows <code>"upstream":"http://127.0.0.1:8787/w/claude"</code> and <code>"device":"dml"</code>. <code>settings.json</code> has <code>ANTHROPIC_BASE_URL</code> on 47831. The caveman proxy is running on 8787.</span></div>
+              <div class="check fail"><b>If not</b><span>No question asked: stdin was not a terminal (piped, or run from a hook); write <code>config.json</code> and the settings line by hand, then <code>cc-hush install</code> again. <code>"device":"cpu"</code> on this machine means DirectML failed to load; see phase 2.</span></div>
             </div>
           </details>
 

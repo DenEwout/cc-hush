@@ -43,7 +43,7 @@ claude plugin install hush
 1. Downloads the model into `~/.cc-hush/models` with progress.
 2. Registers a startup service for your user: a Windows scheduled task at logon (hidden, restarts on failure), a macOS launch agent (`~/Library/LaunchAgents/com.cc-hush.daemon.plist`), or a Linux systemd user unit (`~/.config/systemd/user/cc-hush.service`; headless boxes also need `loginctl enable-linger`).
 3. Stops any running daemon and starts the new one through the service, waits for `/health`.
-4. Sets `ANTHROPIC_BASE_URL` to `http://127.0.0.1:47831` in `~/.claude/settings.json` (`CLAUDE_CONFIG_DIR` respected). If the variable already holds another value it is left alone and you are told what to do.
+4. Sets `ANTHROPIC_BASE_URL` to `http://127.0.0.1:47831` in `~/.claude/settings.json` (`CLAUDE_CONFIG_DIR` respected). If the variable already points at another proxy, install asks whether to chain it: answer yes and that URL becomes `upstream` in `~/.cc-hush/config.json`, so traffic goes Claude Code, cc-hush, your proxy, Anthropic. Answer no, or run non-interactively, and the setting is left alone with instructions printed.
 
 Then restart Claude Code. The plugin's SessionStart hook reports `cc-hush daemon vX running (model ready)`. If the service is not running the hook starts `cc-hush start` itself and tells you to re-run `cc-hush install`.
 

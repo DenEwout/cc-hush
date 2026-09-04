@@ -13,7 +13,7 @@ The daemon is an npm package, separate from this plugin. The plugin only ships h
    cc-hush install
    ```
    `install` downloads `openai/privacy-filter` (q4, about 917 MB) into `~/.cc-hush/models`, registers a startup service (Windows scheduled task at logon, macOS launch agent, Linux systemd user unit), starts the daemon and sets `ANTHROPIC_BASE_URL` to `http://127.0.0.1:47831` in `~/.claude/settings.json`. Re-run it after `npm i -g cc-hush@latest` or a Node upgrade; it is idempotent.
-2. **Existing proxy.** If `install` reports that `ANTHROPIC_BASE_URL` already has another value (for example a caveman proxy on `http://127.0.0.1:8787/w/claude`), write that URL into `~/.cc-hush/config.json` as `upstream` and set `ANTHROPIC_BASE_URL` to `http://127.0.0.1:47831` yourself:
+2. **Existing proxy.** When `ANTHROPIC_BASE_URL` already holds another value (for example a caveman proxy on `http://127.0.0.1:8787/w/claude`), `install` asks whether to chain it. Yes writes it as `upstream` into `~/.cc-hush/config.json` and points `ANTHROPIC_BASE_URL` at cc-hush. Non-interactive runs skip the question and leave the setting alone; then do it by hand:
    ```json
    { "upstream": "http://127.0.0.1:8787/w/claude" }
    ```
