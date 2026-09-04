@@ -10,7 +10,7 @@ export type Policy = {
 
 export const DEFAULT_POLICY: Policy = {
   allowlist: [],
-  allowPii: { mcpServers: [], tools: ['Write', 'Edit', 'MultiEdit', 'Bash'] },
+  allowPii: { mcpServers: [], tools: ['Write', 'Edit', 'MultiEdit'] },
 };
 
 const TOKEN_RE = /<PII:[a-z_]+:\d+>/g;

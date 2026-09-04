@@ -64,6 +64,9 @@ async function scanText(text: string, allowlist: string[], labels: Record<string
   });
 }
 
+// Commands that can move data off the machine: never rehydrate PII into these.
+const EGRESS_RE = /\b(curl|wget|ssh|scp|sftp|rsync|nc|ncat|telnet|gh|aws|gcloud|az|kubectl|helm|mail|mailx|sendmail|http|xh|Invoke-WebRequest|Invoke-RestMethod)\b|\bgit\s+(push|remote)\b|\b(docker|npm|cargo|twine)\s+(push|publish|upload)\b/i;
+
 type Block = { type: string; text?: string; content?: unknown; tool_use_id?: string; id?: string; name?: string; input?: Record<string, unknown> };
 
 function isDataSource(name: string | undefined, input: Record<string, unknown> | undefined): boolean {
@@ -73,7 +76,12 @@ function isDataSource(name: string | undefined, input: Record<string, unknown> |
 }
 
 async function redactResultText(text: string, tool: { name?: string; input?: Record<string, unknown> } | undefined, allowlist: string[], labels: Record<string, number>): Promise<string> {
-  if (!isDataSource(tool?.name, tool?.input)) return redactKnown(text);
+  if (!isDataSource(tool?.name, tool?.input)) {
+    // Regex (secrets, Belgian identifiers) on everything, then vault-known values. No model here (latency).
+    const spans = await detect(text, allowlist, false);
+    for (const [l, n] of Object.entries(countLabels(spans))) labels[l] = (labels[l] ?? 0) + n;
+    return redactKnown(applySpans(text, spans));
+  }
   if (Buffer.byteLength(text) > SIZE_CAP)
     return `Output too large for PII filter (${Math.round(Buffer.byteLength(text) / 1024)} KB). Narrow the query: head, grep, LIMIT, or a smaller page.`;
   const pre = tool?.name?.startsWith('mcp__') ? mcpKeyPassText(text) : text;
@@ -129,7 +137,13 @@ async function handleHook(ev: any): Promise<unknown> {
     let rehydrated = false;
     if (isWhitelisted(name, policy)) {
       const r = rehydrateDeep(input);
-      if (JSON.stringify(r) !== JSON.stringify(input)) { input = r; out.updatedInput = input; rehydrated = true; }
+      if (JSON.stringify(r) !== JSON.stringify(input)) {
+        if (name === 'Bash' && EGRESS_RE.test(String(input.command ?? ''))) {
+          audit(session, 'PreToolUse', name, {}, 'deny', Date.now() - t0);
+          return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'cc-hush: refusing to rehydrate PII tokens into a command that can send data off the machine. Ask the user to run this step.' } };
+        }
+        input = r; out.updatedInput = input; rehydrated = true;
+      }
     }
     if (name === 'Bash' || name.startsWith('mcp__')) {
       const v = guard(name, input, ev.cwd ?? process.cwd(), loadSchema(findProject(ev.cwd)));
@@ -159,6 +173,7 @@ async function proxy(req: http.IncomingMessage, res: http.ServerResponse) {
   let body = await readBody(req);
   await ready; // hold requests until the model is loaded: nothing leaves unredacted
   if (req.method === 'POST' && body.length) {
+    // Fail closed: any error here means the body is NOT forwarded.
     try {
       const parsed = JSON.parse(body.toString('utf8'));
       let sid: string | null = null;
@@ -167,7 +182,11 @@ async function proxy(req: http.IncomingMessage, res: http.ServerResponse) {
       const labels = await redactBody(parsed, policyFor(cwd).allowlist);
       body = Buffer.from(JSON.stringify(parsed));
       audit(sid, 'proxy', null, labels, 'redacted', Date.now() - t0);
-    } catch (e) { console.error('[hush] body not JSON, forwarded as-is', (e as Error).message); }
+    } catch (e) {
+      console.error('[hush] redaction failed, request dropped:', (e as Error).message);
+      audit(null, 'proxy', null, {}, 'dropped', Date.now() - t0);
+      return json(res, 502, { type: 'error', error: { type: 'api_error', message: `cc-hush: redaction failed, request not forwarded: ${(e as Error).message}` } });
+    }
   }
   const headers: http.OutgoingHttpHeaders = { ...req.headers, host: upstream.host, 'content-length': body.length };
   delete headers['transfer-encoding'];
@@ -190,7 +209,13 @@ const server = http.createServer(async (req, res) => {
     if (url === '/hook' && req.method === 'POST') {
       await ready;
       const ev = JSON.parse((await readBody(req)).toString('utf8'));
-      return json(res, 200, await handleHook(ev));
+      try { return json(res, 200, await handleHook(ev)); } catch (e) {
+        console.error('[hush] hook failed, failing closed:', e);
+        const reason = `cc-hush: hook error, failing closed: ${(e as Error).message}`;
+        return json(res, 200, ev.hook_event_name === 'PreToolUse'
+          ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }
+          : { decision: 'block', reason });
+      }
     }
     await proxy(req, res);
   } catch (e) {

@@ -8,10 +8,10 @@ TypeScript, Node 24, no framework, no build step. Detection runs locally with [`
 
 One local daemon on `127.0.0.1:47831`, shared by all Claude Code sessions, plays two roles:
 
-- **API proxy.** `ANTHROPIC_BASE_URL` points at the daemon. Outbound request bodies are rewritten: user text and data-source tool results (WebFetch, MCP, `psql`, `curl`, ...) are scanned and PII is replaced by stable tokens like `<PII:email:3>`. Other tool results (Read, Grep) get vault-known values replaced by plain string match. Responses stream back unchanged.
-- **Hook server.** `UserPromptSubmit` blocks prompts containing secrets. `PreToolUse` runs the shell/SQL guard on `Bash` and MCP tools and rehydrates tokens back to real values for whitelisted tools (`Write`, `Edit`, `Bash`, listed MCP servers) so Claude can still act on the data without seeing it.
+- **API proxy.** `ANTHROPIC_BASE_URL` points at the daemon. Outbound request bodies are rewritten: user text and data-source tool results (WebFetch, MCP, `psql`, `curl`, ...) are scanned and PII is replaced by stable tokens like `<PII:email:3>`. Other tool results (Read, Grep) get the regex pass plus vault-known values replaced by plain string match. Responses stream back unchanged.
+- **Hook server.** `UserPromptSubmit` blocks prompts containing secrets. `PreToolUse` runs the shell/SQL guard on `Bash` and MCP tools and rehydrates tokens back to real values for whitelisted tools (`Write`, `Edit`, listed MCP servers) so Claude can still act on the data without seeing it. Hooks are command hooks that exit 2 when the daemon cannot answer, so a dead daemon blocks instead of passing.
 
-Daemon down means Claude cannot reach the model at all. Nothing leaves unredacted.
+Daemon down means Claude cannot reach the model at all and every hooked tool call is blocked. Any redaction error drops the request instead of forwarding it. Nothing leaves unredacted.
 
 ```
 Claude Code --http hooks--> hush daemon --/v1/*--> upstream (Anthropic or your own proxy)
@@ -60,14 +60,14 @@ Machine config at `${CLAUDE_PLUGIN_DATA}/config.json` (default `~/.claude/plugin
   "allowlist": ["Ewout Van Gossum", "qmino.com"],
   "allowPii": {
     "mcpServers": ["claude_ai_Atlassian_Rovo"],
-    "tools": ["Write", "Edit", "MultiEdit", "Bash"]
+    "tools": ["Write", "Edit", "MultiEdit"]
   }
 }
 ```
 
 - `allowlist`: terms never treated as PII.
 - `allowPii.mcpServers`: MCP server name prefixes whose tool inputs get real values. Everything else receives the literal token.
-- `allowPii.tools`: built-in tools that get real values. Default when the file is absent: `Write`, `Edit`, `MultiEdit`, `Bash`.
+- `allowPii.tools`: built-in tools that get real values. Default when the file is absent: `Write`, `Edit`, `MultiEdit`. Adding `Bash` is possible but a rehydrated command containing `curl`, `wget`, `ssh`, `gh`, `git push` or a cloud CLI is denied.
 
 `.hush/schema.json` classifies PII columns for the SQL guard. Build it with the `hush-schema` skill:
 

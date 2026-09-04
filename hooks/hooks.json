@@ -11,7 +11,7 @@
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "http", "url": "http://127.0.0.1:47831/hook", "timeout": 30 }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.ts\"", "timeout": 30 }
         ]
       }
     ],
@@ -19,7 +19,7 @@
       {
         "matcher": "Bash|Write|Edit|MultiEdit|mcp__.*",
         "hooks": [
-          { "type": "http", "url": "http://127.0.0.1:47831/hook", "timeout": 30 }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.ts\"", "timeout": 30 }
         ]
       }
     ]

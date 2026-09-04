@@ -15,7 +15,7 @@ Generic privacy plugin for Claude Code. Keeps PII and secrets out of the Anthrop
 One native Node daemon on `127.0.0.1:47831` (fixed, `hooks.json` needs a static URL), started per machine, shared by all Claude Code sessions. It holds the model in memory and plays two roles:
 
 - **API proxy.** `ANTHROPIC_BASE_URL` points at the daemon. The daemon rewrites outbound request bodies and forwards to the previous upstream (currently the caveman proxy at `http://127.0.0.1:8787/w/claude`). Responses stream back unchanged. All redaction happens here.
-- **Hook server.** `hooks.json` uses `type: http` for UserPromptSubmit and PreToolUse. The daemon receives the event JSON and returns the hook decision.
+- **Hook server.** `hooks.json` uses command hooks (`hooks/hook.ts`) for UserPromptSubmit and PreToolUse. The wrapper posts the event JSON to the daemon and prints the decision; if the daemon cannot answer it exits 2, which blocks the prompt or tool call. Claude Code treats unreachable `type: http` hooks as non-blocking, so http hooks would fail open.
 
 Because the daemon is also the API proxy, "daemon down" means Claude cannot reach the model at all. That is the fail-closed guarantee: nothing leaves unredacted. While the model is still loading, the daemon accepts connections and holds requests until ready.
 
@@ -44,11 +44,11 @@ Constants in code: dtype `q4`, threshold `0.5`, size cap `32KB`, data-source pat
     "allowlist": ["Ewout Van Gossum", "qmino.com"],
     "allowPii": {
       "mcpServers": ["claude_ai_Atlassian_Rovo"],
-      "tools": ["Write", "Edit", "MultiEdit", "Bash"]
+      "tools": ["Write", "Edit", "MultiEdit"]
     }
   }
   ```
-  `allowlist`: terms never treated as PII. `allowPii.mcpServers`: MCP server name prefixes whose tool inputs get real values rehydrated. `allowPii.tools`: built-in tools that get rehydrated. Defaults when the file is absent: no MCP servers, tools `Write`, `Edit`, `MultiEdit`, `Bash`.
+  `allowlist`: terms never treated as PII. `allowPii.mcpServers`: MCP server name prefixes whose tool inputs get real values rehydrated. `allowPii.tools`: built-in tools that get rehydrated. Defaults when the file is absent: no MCP servers, tools `Write`, `Edit`, `MultiEdit`. `Bash` is not rehydrated by default: `curl https://x/<PII:secret:1>` would otherwise exfiltrate the real value. Projects that add `Bash` still get a hard deny when the rehydrated command contains a network tool (`curl`, `wget`, `ssh`, `scp`, `gh`, `git push`, cloud CLIs, `docker push`, `npm publish`, ...).
 - `.hush/schema.json`: PII column classification, built by the `hush-schema` skill, see below.
 
 The daemon resolves `.hush/` by walking up from the hook payload's `cwd`.
@@ -76,13 +76,13 @@ Rehydration (token -> real value) happens in PreToolUse for tools listed in `all
 
 ## Redaction in the proxy
 
-The proxy rewrites the request body before forwarding. Each `tool_result` block is paired with its `tool_use` block in the preceding assistant message, which gives the tool name and input.
+The proxy rewrites the request body before forwarding. Any error during parsing or redaction drops the request with a 502; the original body is never forwarded. Each `tool_result` block is paired with its `tool_use` block in the preceding assistant message, which gives the tool name and input.
 
 | Block | Treatment | Model |
 |---|---|---|
 | `role: user` text | Full scan, all labels + regex, tokenize | Yes |
 | `tool_result` of a data source (WebFetch, `mcp__*`, Bash whose command matches the data-source pattern) | Above 32KB: replaced with `Output too large for PII filter (N KB). Narrow the query: head, grep, LIMIT, or a smaller page.` Otherwise: MCP JSON key pass, then full scan, tokenize | Yes |
-| Every other `tool_result` (Read, Grep, other Bash) | Replace vault-known real values with their tokens, plain string match | No |
+| Every other `tool_result` (Read, Grep, other Bash) | Regex pass (secrets, Belgian identifiers), then replace vault-known real values with their tokens, plain string match | No |
 | System prompt, assistant messages | Untouched | |
 
 The third row closes the loop: a value rehydrated into a Bash command or written to a file cannot re-enter the API through Read or grep output. Redaction is memoized per block by content hash, so resent history costs one lookup per block.
@@ -134,10 +134,10 @@ Labels are the 8 privacy-filter labels plus `pii` as a generic fallback. Returns
 | Event | Matcher | Type | Action |
 |---|---|---|---|
 | SessionStart | | command | `node hooks/ensure-daemon.ts`: GET `/health`, spawn daemon detached if absent (`EADDRINUSE` means another session won), restart on version mismatch, emit `additionalContext` (two lines pointing at the `hush-guide` skill) |
-| UserPromptSubmit | | http | Secret scan. Block or allow. Audit. |
-| PreToolUse | `Bash\|Write\|Edit\|MultiEdit\|mcp__.*` | http | Dispatch on `tool_name`: shell and SQL guard for Bash and MCP, then rehydrate tokens in the input when the tool or server is whitelisted. Return `updatedInput`. Audit. |
+| UserPromptSubmit | | command | `node hooks/hook.ts`: POST to `/hook`. Secret scan. Block or allow. Exit 2 if the daemon is unreachable. Audit. |
+| PreToolUse | `Bash\|Write\|Edit\|MultiEdit\|mcp__.*` | command | `node hooks/hook.ts`, exit 2 if the daemon is unreachable. Dispatch on `tool_name`: shell and SQL guard for Bash and MCP, then rehydrate tokens in the input when the tool or server is whitelisted. Return `updatedInput`. Audit. |
 
-No PostToolUse hook. No command hooks on tool events (issue #34573 dropped them from plugin `hooks.json` on Windows). First build step is a smoke test that the http PreToolUse hook fires in the installed Claude Code (2.1.260).
+No PostToolUse hook. Issue #34573 reported plugin `hooks.json` command hooks on tool events being dropped on Windows; first build step is a smoke test that the PreToolUse command hook fires in the installed Claude Code (2.1.260). If it does not, `hush-setup` copies the two hook entries into `~/.claude/settings.json`.
 
 ## Skills
 
@@ -162,6 +162,7 @@ cc-hush/
   .claude-plugin/plugin.json
   hooks/hooks.json
   hooks/ensure-daemon.ts
+  hooks/hook.ts          command hook wrapper, POST /hook, exit 2 when the daemon is down
   skills/hush-setup/SKILL.md
   skills/hush-guide/SKILL.md
   skills/hush-schema/SKILL.md
@@ -176,7 +177,7 @@ cc-hush/
 
 ## Acceptance gates
 
-1. The http PreToolUse hook fires from plugin `hooks.json` on Windows, Claude Code 2.1.260.
+1. The PreToolUse command hook fires from plugin `hooks.json` on Windows, Claude Code 2.1.260. With the daemon stopped, `git push --force origin main` is blocked with the "daemon unavailable" message.
 2. p50 latency of a proxy scan on a 4KB Rovo issue result under 2s on the Arc Pro 140T via DirectML. Run once on an English and once on a Dutch issue. Dutch misses trigger the deferred NER model. Latency misses shrink scope before adding hardware.
 3. Round trip: Rovo result with a real name becomes a token in the request body, Claude writes it to a file, the file holds the real name, and a `cat` of that file shows the token again in the next request body.
 4. `git push --force origin main` is denied. `git push --force origin feature/x` asks. `bash deploy.sh` containing `DROP TABLE` asks.

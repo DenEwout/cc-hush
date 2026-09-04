@@ -43,6 +43,7 @@ test('vault: stable tokens, round trip, known-value redaction', () => {
   assert.equal(rehydrate(red), t);
   assert.equal(redactKnown('cat: alice@example.com'), `cat: ${tok}`);
   assert.equal(isWhitelisted('Write', DEFAULT_POLICY), true);
+  assert.equal(isWhitelisted('Bash', DEFAULT_POLICY), false);
   assert.equal(isWhitelisted('mcp__claude_ai_Atlassian_Rovo__addCommentToJiraIssue', DEFAULT_POLICY), false);
   assert.equal(isWhitelisted('mcp__claude_ai_Atlassian_Rovo__addCommentToJiraIssue', { ...DEFAULT_POLICY, allowPii: { tools: [], mcpServers: ['claude_ai_Atlassian'] } }), true);
 });

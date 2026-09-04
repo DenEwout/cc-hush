@@ -22,4 +22,6 @@ Run these steps in order. `${CLAUDE_PLUGIN_ROOT}` is the plugin install director
    and restart Claude Code. From then on, if the daemon is down Claude cannot reach the model at all. That is intended: nothing leaves unredacted.
 6. **Project config (optional).** Create `.hush/config.json` in the repo with `allowlist` (terms never treated as PII, for example the team's own names and company domain) and `allowPii` (tools and MCP server prefixes that receive real values). Run `hush-schema` to build `.hush/schema.json`.
 
+7. **Check the guard fires.** Ask Claude to run `git push --force origin main` in a scratch repo. It must be denied with a `cc-hush:` reason. If nothing happens (seen on Windows with plugin hooks on tool events, issue #34573), copy the `UserPromptSubmit` and `PreToolUse` entries from `${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json` into `~/.claude/settings.json` under `hooks`, replacing `${CLAUDE_PLUGIN_ROOT}` with the absolute plugin path.
+
 Verify: `curl 127.0.0.1:47831/debug/vault` shows the token map after a prompt containing an email address.

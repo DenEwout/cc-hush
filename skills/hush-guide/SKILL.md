@@ -10,7 +10,7 @@ cc-hush sits between Claude Code and the Anthropic API. Everything you see has a
 ## Tokens
 
 - `<PII:email:3>`, `<PII:person:1>`, `<PII:phone:2>`, `<PII:address:1>`, `<PII:account:4>`, `<PII:url:1>`, `<PII:date:2>`, `<PII:secret:1>` stand for real values held in a local vault. The same real value always maps to the same token.
-- **Use tokens verbatim.** In `Write`, `Edit`, `Bash` and whitelisted MCP tools they are rehydrated to the real value before execution. A file you write with `<PII:person:1>` will contain the real name.
+- **Use tokens verbatim.** In `Write`, `Edit` and whitelisted MCP tools they are rehydrated to the real value before execution. A file you write with `<PII:person:1>` will contain the real name. `Bash` is not rehydrated unless the project enables it, and never for commands that can send data off the machine (`curl`, `ssh`, `gh`, `git push`...).
 - **Never guess or reconstruct a real value.** Never ask the user to paste it. If you need to know which token is which, refer to it by token.
 - **Never put tokens into non-whitelisted destinations** (WebFetch, MCP servers not listed in `.hush/config.json` `allowPii.mcpServers`, `curl` to external hosts). The token would land there literally. Ask the user to perform that step themselves.
 - Output from any tool, including whitelisted MCP servers, is tokenized on the way back in. A `cat` of a file you just wrote shows tokens again. That is expected.
@@ -29,4 +29,5 @@ cc-hush sits between Claude Code and the Anthropic API. Everything you see has a
 - `curl 127.0.0.1:47831/health` : version, model state, device, upstream, vault size.
 - `curl 127.0.0.1:47831/debug/vault` : the token map (loopback only). Do not paste its output back into the conversation.
 - Log: `${CLAUDE_PLUGIN_DATA}/daemon.log`. Audit: `${CLAUDE_PLUGIN_DATA}/audit.sqlite`, labels and counts only.
-- If the API is unreachable, the daemon is down. Run the `hush-setup` skill step 3.
+- `cc-hush: privacy daemon unavailable ... blocked` : the daemon is down; every hooked tool call and prompt is blocked until it is back. Run the `hush-setup` skill step 3.
+- If the API is unreachable, the daemon is down. Same fix.
