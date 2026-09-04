@@ -3,6 +3,7 @@ import { tokenize, type Span } from './vault.ts';
 
 const MODEL_ID = 'openai/privacy-filter';
 const MODEL_CONTEXT_TOKENS = 128_000;
+const MAX_CHUNK_CHARS = 6_000;
 const MIN_SPAN_CONFIDENCE = 0.5;
 const MIN_ALLOWLIST_FRAGMENT_LENGTH = 3;
 
@@ -137,9 +138,27 @@ function groupBioesTags(tokens: TaggedToken[]): Span[] {
   return spans;
 }
 
+export function chunkStarts(text: string): number[] {
+  const starts = [0];
+  while (text.length - starts.at(-1)! > MAX_CHUNK_CHARS) {
+    const from = starts.at(-1)!;
+    let breakAt = from + MAX_CHUNK_CHARS;
+    while (breakAt > from && !/\s/.test(text[breakAt])) breakAt--;
+    starts.push(breakAt > from ? breakAt + 1 : from + MAX_CHUNK_CHARS);
+  }
+  return starts;
+}
+
 export async function modelDetect(text: string): Promise<Span[]> {
   await loading;
-  return groupBioesTags(await tagEachToken(text));
+  const spans: Span[] = [];
+  const starts = chunkStarts(text);
+  for (let i = 0; i < starts.length; i++) {
+    const from = starts[i];
+    const tagged = await tagEachToken(text.slice(from, starts[i + 1] ?? text.length));
+    for (const span of groupBioesTags(tagged)) spans.push({ ...span, start: span.start + from, end: span.end + from });
+  }
+  return spans;
 }
 
 export function mergeSpans(spans: Span[], text: string, allowlist: string[]): Span[] {

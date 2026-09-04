@@ -229,8 +229,8 @@ reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v cc-hush</pre>
               <p class="note">Part of step 2: install sees <code>ANTHROPIC_BASE_URL</code> is <code>http://127.0.0.1:8787/w/claude</code> and asks <code>Chain it behind cc-hush? [Y/n]</code>. Answer Y. It writes <code>upstream</code> into <code>~/.cc-hush/config.json</code> before starting the daemon and repoints <code>ANTHROPIC_BASE_URL</code> once the daemon is up. Caveman then only ever sees redacted text.</p>
               <pre class="cmd">cc-hush status
 cat ~/.cc-hush/config.json</pre>
-              <div class="check pass"><b>Pass</b><span><code>status</code> shows <code>"upstream":"http://127.0.0.1:8787/w/claude"</code> and <code>"device":"dml"</code>. <code>settings.json</code> has <code>ANTHROPIC_BASE_URL</code> on 47831. The caveman proxy is running on 8787.</span></div>
-              <div class="check fail"><b>If not</b><span>No question asked: stdin was not a terminal (piped, or run from a hook); write <code>config.json</code> and the settings line by hand, then <code>cc-hush install</code> again. <code>"device":"cpu"</code> on this machine means DirectML failed to load; see phase 2.</span></div>
+              <div class="check pass"><b>Pass</b><span><code>status</code> shows <code>"upstream":"http://127.0.0.1:8787/w/claude"</code> and <code>"device":"cpu"</code>. <code>settings.json</code> has <code>ANTHROPIC_BASE_URL</code> on 47831. The caveman proxy is running on 8787.</span></div>
+              <div class="check fail"><b>If not</b><span>No question asked: stdin was not a terminal (piped, or run from a hook); write <code>config.json</code> and the settings line by hand, then <code>cc-hush install</code> again. <code>"device"</code> is <code>cpu</code> unless <code>config.json</code> says otherwise; DirectML is opt-in since it measured slower here, see phase 2.</span></div>
             </div>
           </details>
 
@@ -360,12 +360,13 @@ cc-hush install</pre>
           </details>
 
           <details class="step" id="s2-4">
-            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Confirm DirectML on the Windows machine</div><div class="sub">Device selection is automatic; verify it happened</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Decide between CPU and DirectML</div><div class="sub">cpu is the default since 0.2.0; dml is opt-in</div></div><div class="tags"><span class="tag decide">decide</span></div></summary>
             <div class="body">
-              <pre class="cmd">curl 127.0.0.1:47831/health
+              <p class="note">Measured on this machine with a fake upstream, single request, cold memo, prose with names and phones: cpu 4 KB 0.6 s, 32 KB 3.8 s, 68 KB 10 s. dml 1.5 s, 7.3 s, 17 s. Attention memory is quadratic in block length; before chunking a 26k-token block failed outright on dml.</p>
+              <pre class="cmd">echo '{ "upstream": "http://127.0.0.1:8787/w/claude", "device": "dml" }' &gt; ~/.cc-hush/config.json &amp;&amp; cc-hush install
 findstr "model ready" %USERPROFILE%\.cc-hush\daemon.log</pre>
-              <div class="check pass"><b>Pass</b><span><code>"device":"dml"</code> and a log line <code>model ready on dml</code>.</span></div>
-              <div class="check fail"><b>If not</b><span>onnxruntime-node fell back or failed to load the DirectML provider. Set <code>"device":"cpu"</code> in the machine config to keep working, then check the onnxruntime-node version bundled with @huggingface/transformers 4.2 supports DML on your build.</span></div>
+              <div class="check decide"><b>Decide</b><span>Keep <code>cpu</code> unless a real session's audit latencies are better on <code>dml</code>. A discrete GPU with <code>cuda</code> is the case worth re-measuring.</span></div>
+              <div class="check fail"><b>If not</b><span><code>model ready on cpu</code> while config says dml: onnxruntime-node failed to load the DirectML provider, read the lines above it in <code>daemon.log</code>.</span></div>
             </div>
           </details>
 

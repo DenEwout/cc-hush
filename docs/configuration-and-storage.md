@@ -35,7 +35,7 @@ flowchart TD
 | Key | Default | Notes |
 |---|---|---|
 | `upstream` | `https://api.anthropic.com` | Any Anthropic-compatible base URL, for example another local proxy |
-| `device` | `dml` on Windows, `cpu` elsewhere | `cuda` where onnxruntime-node finds it |
+| `device` | `cpu` | `dml` (Windows) or `cuda` where onnxruntime-node finds it; measure first, dml was 2x slower on an Arc iGPU |
 
 Environment overrides for tests: `HUSH_UPSTREAM`, `HUSH_DEVICE`.
 

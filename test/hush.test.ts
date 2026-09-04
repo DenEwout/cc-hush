@@ -152,3 +152,20 @@ test('install: ANTHROPIC_BASE_URL merge into settings.json', async () => {
   assert.match(vbs, /Loop While code <> 0/);
   assert.match(systemdUnit(launcher), /ExecStart="\/usr\/local\/bin\/node" "\/usr\/local\/lib\/node_modules\/cc-hush\/bin\/cc-hush.ts" start --log/);
 });
+
+test('detect: long text is scanned in whitespace-aligned chunks with correct offsets', async () => {
+  const { chunkStarts } = await import('../daemon/detect.ts');
+  assert.deepEqual(chunkStarts('short text'), [0]);
+  const words = Array.from({ length: 4000 }, (_, i) => `w${i}`).join(' ');
+  const starts = chunkStarts(words);
+  assert.ok(starts.length > 1);
+  assert.equal(starts[0], 0);
+  for (let i = 1; i < starts.length; i++) {
+    assert.ok(starts[i] - starts[i - 1] <= 6000, 'chunk within limit');
+    assert.match(words[starts[i] - 1], /\s/, 'chunk begins right after whitespace');
+    assert.notEqual(words[starts[i]], ' ');
+  }
+  const pieces = starts.map((s, i) => words.slice(s, starts[i + 1] ?? words.length));
+  assert.equal(pieces.join(''), words);
+  assert.deepEqual(chunkStarts('x'.repeat(13000)), [0, 6000, 12000]);
+});

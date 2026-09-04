@@ -28,7 +28,7 @@ Deterministic, score 1, runs on every text including repo-local tool output.
 
 ### modelDetect
 
-`openai/privacy-filter`, 1.5B-parameter mixture of experts with 50M active, q4 ONNX (917 MB), run through `@huggingface/transformers` on onnxruntime-node. Device: `dml` on Windows, `cpu` elsewhere, `cuda` when configured.
+`openai/privacy-filter`, 1.5B-parameter mixture of experts with 50M active, q4 ONNX (917 MB), run through `@huggingface/transformers` on onnxruntime-node. Device: `cpu` by default; `dml` or `cuda` when configured. On an Intel Arc Pro 140T, `dml` ran this q4 model 2x slower than `cpu`.
 
 ```mermaid
 flowchart TD
@@ -41,7 +41,7 @@ flowchart TD
     F -- no --> H[dropped]
 ```
 
-Labels: `account_number`, `private_address`, `private_email`, `private_person`, `private_phone`, `private_url`, `private_date`, `secret`. The model context is 128k tokens; the proxy's 32 KB cap keeps inputs far below that, and the scan throws rather than truncating silently.
+Labels: `account_number`, `private_address`, `private_email`, `private_person`, `private_phone`, `private_url`, `private_date`, `secret`. The model context is 128k tokens, but the ONNX graph materialises attention scores of 14 heads x length squared, so a 26k-token block fails on DirectML and crawls on CPU. Text is therefore scanned in chunks of at most 6000 characters, split at whitespace, with span offsets shifted back; the model's own attention window is 128 tokens, so chunking loses nothing. Identical blocks in flight at the same time share one scan, so a client retry of a body still being redacted does not start a second pass.
 
 ### mergeSpans
 

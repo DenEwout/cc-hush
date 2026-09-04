@@ -67,7 +67,7 @@ claude plugin uninstall hush
 { "upstream": "https://api.anthropic.com", "device": "cpu" }
 ```
 
-`upstream` is where the daemon forwards API traffic; point it at another local proxy to chain them. `device` defaults to `dml` on Windows and `cpu` elsewhere; `cuda` works where onnxruntime-node finds it. `HUSH_UPSTREAM`, `HUSH_DEVICE` and `HUSH_DATA` override from the environment. Restart the daemon after changes (`cc-hush install`, or `cc-hush stop` and let the service bring it back).
+`upstream` is where the daemon forwards API traffic; point it at another local proxy to chain them. `device` defaults to `cpu`; `dml` (Windows) and `cuda` are opt-in. Measure before switching: on an Intel Arc Pro 140T, `dml` scanned the q4 model 2x slower than `cpu` (68 KB of prose: 17 s against 10 s). `HUSH_UPSTREAM`, `HUSH_DEVICE` and `HUSH_DATA` override from the environment. Restart the daemon after changes (`cc-hush install`, or `cc-hush stop` and let the service bring it back).
 
 ## Project config
 

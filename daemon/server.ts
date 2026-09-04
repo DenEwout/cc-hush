@@ -20,8 +20,7 @@ const readJson = (file: string) => { try { return JSON.parse(fs.readFileSync(fil
 
 const machineConfig = readJson(CONFIG_FILE) ?? {};
 const upstream = new URL(process.env.HUSH_UPSTREAM ?? machineConfig.upstream ?? 'https://api.anthropic.com');
-const defaultDevice = process.platform === 'win32' ? 'dml' : 'cpu';
-const device: string = process.env.HUSH_DEVICE ?? machineConfig.device ?? defaultDevice;
+const device: string = process.env.HUSH_DEVICE ?? machineConfig.device ?? 'cpu';
 
 if (!fs.existsSync(TOKEN_FILE)) fs.writeFileSync(TOKEN_FILE, crypto.randomBytes(24).toString('hex'), { mode: 0o600 });
 const TOKEN = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
@@ -52,7 +51,7 @@ function countLabels(into: LabelCounts, spans: Span[]) {
   for (const span of spans) into[span.label] = (into[span.label] ?? 0) + 1;
 }
 
-const redactedTextByHash = new Map<string, string>();
+const redactionByHash = new Map<string, Promise<{ text: string; spans: Span[] }>>();
 const sha1 = (s: string) => crypto.createHash('sha1').update(s).digest('hex');
 
 type Block = { type: string; text?: string; content?: unknown; tool_use_id?: string; id?: string; name?: string; input?: Record<string, unknown> };
@@ -72,14 +71,16 @@ class RequestRedaction {
 
   private async scanWithModel(text: string): Promise<string> {
     const key = sha1(text + '\0' + this.allowlist.join(','));
-    let redacted = redactedTextByHash.get(key);
-    if (redacted === undefined) {
-      const spans = await detect(text, this.allowlist);
-      countLabels(this.labels, spans);
-      redacted = applySpans(text, spans);
-      if (redactedTextByHash.size > REDACTION_CACHE_MAX_ENTRIES) redactedTextByHash.clear();
-      redactedTextByHash.set(key, redacted);
+    let pending = redactionByHash.get(key);
+    const firstScan = !pending;
+    if (!pending) {
+      pending = detect(text, this.allowlist).then((spans) => ({ text: applySpans(text, spans), spans }));
+      pending.catch(() => redactionByHash.delete(key));
+      if (redactionByHash.size > REDACTION_CACHE_MAX_ENTRIES) redactionByHash.clear();
+      redactionByHash.set(key, pending);
     }
+    const { text: redacted, spans } = await pending;
+    if (firstScan) countLabels(this.labels, spans);
     return redacted;
   }
 
@@ -204,6 +205,8 @@ async function redactRequest(raw: Buffer, startedAt: number): Promise<Buffer> {
 
 async function proxy(req: http.IncomingMessage, res: http.ServerResponse) {
   const startedAt = Date.now();
+  let clientGone = false;
+  res.on('close', () => { clientGone = true; });
   let body = await readBody(req);
   await modelLoaded;
   const hasBodyToRedact = req.method === 'POST' && body.length > 0;
@@ -213,8 +216,13 @@ async function proxy(req: http.IncomingMessage, res: http.ServerResponse) {
     } catch (error) {
       console.error('[hush] redaction failed, request dropped:', (error as Error).message);
       audit(null, 'proxy', null, {}, 'dropped', startedAt);
-      return apiError(res, `redaction failed, request not forwarded: ${(error as Error).message}`);
+      return apiError(res, `redaction failed, request not forwarded: ${(error as Error).message}`, 400);
     }
+  }
+  if (clientGone) {
+    console.error(`[hush] client left during redaction, not forwarded: ${req.method} ${req.url}`);
+    audit(null, 'proxy', null, {}, 'abandoned', startedAt);
+    return;
   }
   forwardUpstream(req, res, body);
 }
@@ -226,7 +234,7 @@ function forwardUpstream(req: http.IncomingMessage, res: http.ServerResponse, bo
   const options = { host: upstream.hostname, port: upstream.port || undefined, method: req.method, path: upstream.pathname.replace(/\/$/, '') + req.url, headers };
   const upstreamRequest = client.request(options, (upstreamResponse) => {
     const status = upstreamResponse.statusCode ?? 502;
-    if (status >= 400) console.error(`[hush] upstream ${status} for ${req.method} ${req.url}${upstreamResponse.headers['retry-after'] ? ` retry-after ${upstreamResponse.headers['retry-after']}` : ''}`);
+    if (status >= 400) console.error(`[hush] upstream ${status} for ${req.method} ${req.url} (client retry ${req.headers['x-stainless-retry-count'] ?? 0}${upstreamResponse.headers['retry-after'] ? `, retry-after ${upstreamResponse.headers['retry-after']}` : ''})`);
     const responseHeaders = { ...upstreamResponse.headers };
     delete responseHeaders['transfer-encoding'];
     res.writeHead(status, responseHeaders);
@@ -251,8 +259,8 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
   res.end(payload);
 }
 
-const apiError = (res: http.ServerResponse, message: string) =>
-  res.headersSent ? res.destroy() : json(res, 502, { type: 'error', error: { type: 'api_error', message: `cc-hush: ${message}` } });
+const apiError = (res: http.ServerResponse, message: string, status = 502) =>
+  res.headersSent ? res.destroy() : json(res, status, { type: 'error', error: { type: 'api_error', message: `cc-hush: ${message}` } });
 
 const health = () => ({ ok: true, version: VERSION, model: modelReady() ? 'ready' : 'loading', device, upstream: upstream.href, vault: size(), pid: process.pid });
 
