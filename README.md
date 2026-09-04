@@ -128,7 +128,7 @@ npm test
 HUSH_UPSTREAM=http://127.0.0.1:47999 node daemon/server.ts
 ```
 
-See [DESIGN.md](DESIGN.md) for the full design and acceptance gates.
+See [docs/](docs/README.md) for the architecture with diagrams and [DESIGN.md](DESIGN.md) for the design and acceptance gates.
 
 ## License
 
