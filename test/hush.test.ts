@@ -31,10 +31,8 @@ test('merge: overlap keeps highest score, allowlist drops', () => {
   assert.equal(mergeSpans(spans, t, []).length, 2);
   assert.equal(mergeSpans(spans, t, ['qmino.com']).length, 1);
   assert.equal(mergeSpans(spans, t, ['Ewout Van Gossum', 'qmino.com']).length, 0);
-  // containing an allowlisted term is not enough
   const mail = 'alice@qmino.com';
   assert.equal(mergeSpans([{ start: 0, end: 15, label: 'private_email', score: 0.9 }], mail, ['qmino.com']).length, 1);
-  // overlapping spans merge into their union
   const u = mergeSpans([{ start: 0, end: 10, label: 'private_person', score: 0.9 }, { start: 5, end: 16, label: 'private_person', score: 0.7 }], t, []);
   assert.deepEqual([u[0].start, u[0].end], [0, 16]);
 });
@@ -123,7 +121,7 @@ test('guard: referenced script file and npm script', () => {
   fs.mkdirSync(path.join(dir, '.hush')); fs.writeFileSync(path.join(dir, '.hush', 'schema.json'), '{ broken');
   assert.equal(loadSchema(dir), BROKEN_SCHEMA);
   assert.equal(guard('Bash', { command: 'psql -c "select 1"' }, dir, BROKEN_SCHEMA)?.decision, 'ask');
-  assert.equal(extract('Bash', { command: 'echo select email' }, dir).sqlish, false);
+  assert.equal(extract('Bash', { command: 'echo select email' }, dir).hasSqlSource, false);
 });
 
 test('detect: never re-tag inside an existing token', async () => {

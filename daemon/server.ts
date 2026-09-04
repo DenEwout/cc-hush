@@ -1,4 +1,3 @@
-// cc-hush daemon: API proxy + http hook server on 127.0.0.1:47831.
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
@@ -7,244 +6,285 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { detect, loadModel, modelReady, mcpKeyPassText } from './detect.ts';
-import { applySpans, redactKnown, rehydrateDeep, isWhitelisted, dump, size, DEFAULT_POLICY, type Policy } from './vault.ts';
+import { applySpans, redactKnown, rehydrateDeep, isWhitelisted, dump, size, DEFAULT_POLICY, type Policy, type Span } from './vault.ts';
 import { guard, findProject, loadSchema, DATA_SOURCE_RE } from './guard.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-export const VERSION: string = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+const VERSION: string = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const PORT = 47831;
-const SIZE_CAP = 32 * 1024;
 const DATA = process.env.CLAUDE_PLUGIN_DATA ?? path.join(os.homedir(), '.claude', 'plugins', 'data', 'hush');
+const TOOL_RESULT_SIZE_CAP_BYTES = 32 * 1024;
+const REDACTION_CACHE_MAX_ENTRIES = 50_000;
+const SHUTDOWN_GRACE_MS = 50;
 fs.mkdirSync(path.join(DATA, 'models'), { recursive: true });
 
-// ---------- machine config ----------
-let machine: { upstream: string; device?: string } = { upstream: 'https://api.anthropic.com' };
-try { machine = { ...machine, ...JSON.parse(fs.readFileSync(path.join(DATA, 'config.json'), 'utf8')) }; } catch { /* defaults */ }
-const upstream = new URL(process.env.HUSH_UPSTREAM ?? machine.upstream);
-const device = process.env.HUSH_DEVICE ?? machine.device ?? (process.platform === 'win32' ? 'dml' : 'cpu');
+const readJson = (file: string) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return undefined; } };
 
-// ---------- local auth token for /hook, /debug/vault, /shutdown ----------
+const machineConfig = readJson(path.join(DATA, 'config.json')) ?? {};
+const upstream = new URL(process.env.HUSH_UPSTREAM ?? machineConfig.upstream ?? 'https://api.anthropic.com');
+const defaultDevice = process.platform === 'win32' ? 'dml' : 'cpu';
+const device: string = process.env.HUSH_DEVICE ?? machineConfig.device ?? defaultDevice;
+
 const TOKEN_FILE = path.join(DATA, 'token');
 if (!fs.existsSync(TOKEN_FILE)) fs.writeFileSync(TOKEN_FILE, crypto.randomBytes(24).toString('hex'), { mode: 0o600 });
 const TOKEN = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
-const authed = (req: http.IncomingMessage) => req.headers['x-hush-token'] === TOKEN;
+const TOKEN_PROTECTED_PATHS = new Set(['/hook', '/debug/vault', '/shutdown']);
+const POST_ONLY_PATHS = new Set(['/hook', '/shutdown']);
 
-// ---------- audit ----------
+const cwdBySession = new Map<string, string>();
+
+function policyFor(cwd: string | undefined): Policy {
+  const projectDir = findProject(cwd);
+  const config = projectDir && readJson(path.join(projectDir, '.hush', 'config.json'));
+  if (!config) return DEFAULT_POLICY;
+  return { allowlist: config.allowlist ?? [], allowPii: { ...DEFAULT_POLICY.allowPii, ...config.allowPii } };
+}
+
 const db = new DatabaseSync(path.join(DATA, 'audit.sqlite'));
 db.exec(`CREATE TABLE IF NOT EXISTS audit(ts TEXT, session_id TEXT, event TEXT, tool_name TEXT, label TEXT, count INTEGER, decision TEXT, latency_ms INTEGER)`);
-const ins = db.prepare(`INSERT INTO audit VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?)`);
-function audit(session: string | null, event: string, tool: string | null, labels: Record<string, number>, decision: string, ms: number) {
-  const entries = Object.entries(labels);
-  if (!entries.length) entries.push(['', 0]);
-  for (const [label, count] of entries) ins.run(session, event, tool, label, count, decision, ms);
-}
-const countLabels = (spans: { label: string }[]) => spans.reduce<Record<string, number>>((a, s) => ((a[s.label] = (a[s.label] ?? 0) + 1), a), {});
+const insertAuditRow = db.prepare(`INSERT INTO audit VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?)`);
 
-// ---------- project policy ----------
-const sessionCwd = new Map<string, string>();
-function policyFor(cwd: string | undefined): Policy {
-  const dir = findProject(cwd);
-  if (!dir) return DEFAULT_POLICY;
-  try {
-    const p = JSON.parse(fs.readFileSync(path.join(dir, '.hush', 'config.json'), 'utf8'));
-    return { allowlist: p.allowlist ?? [], allowPii: { ...DEFAULT_POLICY.allowPii, ...(p.allowPii ?? {}) } };
-  } catch { return DEFAULT_POLICY; }
+type LabelCounts = Record<string, number>;
+
+function audit(session: string | null | undefined, event: string, tool: string | null, labels: LabelCounts, decision: string, startedAt: number) {
+  const rows = Object.entries(labels).length ? Object.entries(labels) : [['', 0] as [string, number]];
+  for (const [label, count] of rows) insertAuditRow.run(session ?? null, event, tool, label, count, decision, Date.now() - startedAt);
 }
 
-// ---------- redaction ----------
-const memo = new Map<string, string>();
-// ponytail: unbounded memo; clear it when it passes 50k entries.
-function memoized(key: string, fn: () => Promise<string>): Promise<string> {
-  const hit = memo.get(key);
-  if (hit !== undefined) return Promise.resolve(hit);
-  return fn().then((v) => { if (memo.size > 50_000) memo.clear(); memo.set(key, v); return v; });
-}
-const hash = (s: string) => crypto.createHash('sha1').update(s).digest('hex');
-
-async function scanText(text: string, allowlist: string[], labels: Record<string, number>): Promise<string> {
-  return memoized('scan:' + hash(text + '\0' + allowlist.join(',')), async () => {
-    const spans = await detect(text, allowlist);
-    for (const [l, n] of Object.entries(countLabels(spans))) labels[l] = (labels[l] ?? 0) + n;
-    return applySpans(text, spans);
-  });
+function countLabels(into: LabelCounts, spans: Span[]) {
+  for (const span of spans) into[span.label] = (into[span.label] ?? 0) + 1;
 }
 
-// Commands that can move data off the machine: never rehydrate PII into these.
-const EGRESS_RE = /\b(curl|wget|ssh|scp|sftp|rsync|nc|ncat|telnet|gh|aws|gcloud|az|kubectl|helm|mail|mailx|sendmail|http|xh|Invoke-WebRequest|Invoke-RestMethod)\b|\bgit\s+(push|remote)\b|\b(docker|npm|cargo|twine)\s+(push|publish|upload)\b/i;
+const redactedTextByHash = new Map<string, string>();
+const sha1 = (s: string) => crypto.createHash('sha1').update(s).digest('hex');
 
 type Block = { type: string; text?: string; content?: unknown; tool_use_id?: string; id?: string; name?: string; input?: Record<string, unknown> };
+type ToolUse = { name?: string; input?: Record<string, unknown> };
+const blocksOf = (content: unknown): Block[] => (Array.isArray(content) ? content : []);
 
-function isDataSource(name: string | undefined, input: Record<string, unknown> | undefined): boolean {
-  if (!name) return false;
+function isExternalDataSource(tool?: ToolUse): boolean {
+  const name = tool?.name ?? '';
   if (name === 'WebFetch' || name.startsWith('mcp__')) return true;
-  return name === 'Bash' && DATA_SOURCE_RE.test(String(input?.command ?? ''));
+  return name === 'Bash' && DATA_SOURCE_RE.test(String(tool?.input?.command ?? ''));
 }
 
-async function redactResultText(text: string, tool: { name?: string; input?: Record<string, unknown> } | undefined, allowlist: string[], labels: Record<string, number>): Promise<string> {
-  if (!isDataSource(tool?.name, tool?.input)) {
-    // Regex (secrets, Belgian identifiers) on everything, then vault-known values. No model here (latency).
-    const spans = await detect(text, allowlist, false);
-    for (const [l, n] of Object.entries(countLabels(spans))) labels[l] = (labels[l] ?? 0) + n;
+class RequestRedaction {
+  labels: LabelCounts = {};
+  private allowlist: string[];
+  constructor(allowlist: string[]) { this.allowlist = allowlist; }
+
+  private async scanWithModel(text: string): Promise<string> {
+    const key = sha1(text + '\0' + this.allowlist.join(','));
+    let redacted = redactedTextByHash.get(key);
+    if (redacted === undefined) {
+      const spans = await detect(text, this.allowlist);
+      countLabels(this.labels, spans);
+      redacted = applySpans(text, spans);
+      if (redactedTextByHash.size > REDACTION_CACHE_MAX_ENTRIES) redactedTextByHash.clear();
+      redactedTextByHash.set(key, redacted);
+    }
+    return redacted;
+  }
+
+  private async scanWithRegexAndVault(text: string): Promise<string> {
+    const spans = await detect(text, this.allowlist, false);
+    countLabels(this.labels, spans);
     return redactKnown(applySpans(text, spans));
   }
-  if (Buffer.byteLength(text) > SIZE_CAP)
-    return `Output too large for PII filter (${Math.round(Buffer.byteLength(text) / 1024)} KB). Narrow the query: head, grep, LIMIT, or a smaller page.`;
-  const pre = tool?.name?.startsWith('mcp__') ? mcpKeyPassText(text) : text;
-  return scanText(pre, allowlist, labels);
-}
 
-export async function redactBody(body: any, allowlist: string[]): Promise<Record<string, number>> {
-  const labels: Record<string, number> = {};
-  if (typeof body?.system === 'string') body.system = await scanText(body.system, allowlist, labels);
-  else if (Array.isArray(body?.system))
-    for (const b of body.system as Block[]) if (b.type === 'text' && typeof b.text === 'string') b.text = await scanText(b.text, allowlist, labels);
-  if (!Array.isArray(body?.messages)) return labels;
-  const uses = new Map<string, { name?: string; input?: Record<string, unknown> }>();
-  for (const msg of body.messages) {
-    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-      for (const b of msg.content as Block[]) if (b.type === 'tool_use' && b.id) uses.set(b.id, { name: b.name, input: b.input });
-      continue;
-    }
-    if (msg.role !== 'user') continue;
-    if (typeof msg.content === 'string') { msg.content = await scanText(msg.content, allowlist, labels); continue; }
-    if (!Array.isArray(msg.content)) continue;
-    for (const b of msg.content as Block[]) {
-      if (b.type === 'text' && typeof b.text === 'string') b.text = await scanText(b.text, allowlist, labels);
-      else if (b.type === 'tool_result') {
-        const tool = b.tool_use_id ? uses.get(b.tool_use_id) : undefined;
-        if (typeof b.content === 'string') b.content = await redactResultText(b.content, tool, allowlist, labels);
-        else if (Array.isArray(b.content))
-          for (const c of b.content as Block[]) if (c.type === 'text' && typeof c.text === 'string') c.text = await redactResultText(c.text, tool, allowlist, labels);
-      }
-    }
-  }
-  return labels;
-}
-
-// ---------- hooks ----------
-async function handleHook(ev: any): Promise<unknown> {
-  const t0 = Date.now();
-  const session = ev.session_id ?? null;
-  if (ev.cwd) sessionCwd.set(session, ev.cwd);
-  const policy = policyFor(ev.cwd);
-
-  if (ev.hook_event_name === 'UserPromptSubmit') {
-    const spans = await detect(String(ev.prompt ?? ''), policy.allowlist);
-    const secrets = spans.filter((s) => s.label === 'secret');
-    const decision = secrets.length ? 'block' : 'allow';
-    audit(session, 'UserPromptSubmit', null, countLabels(spans), decision, Date.now() - t0);
-    if (secrets.length) return { decision: 'block', reason: `cc-hush: prompt contains ${secrets.length} secret(s). Remove the secret and reference it by name or env var instead.` };
-    return {};
+  private async redactToolResult(text: string, tool?: ToolUse): Promise<string> {
+    if (!isExternalDataSource(tool)) return this.scanWithRegexAndVault(text);
+    const bytes = Buffer.byteLength(text);
+    if (bytes > TOOL_RESULT_SIZE_CAP_BYTES) return `Output too large for PII filter (${Math.round(bytes / 1024)} KB). Narrow the query: head, grep, LIMIT, or a smaller page.`;
+    const isMcpResult = tool!.name!.startsWith('mcp__');
+    return this.scanWithModel(isMcpResult ? mcpKeyPassText(text) : text);
   }
 
-  if (ev.hook_event_name === 'PreToolUse') {
-    const name: string = ev.tool_name ?? '';
-    let input: Record<string, unknown> = ev.tool_input ?? {};
-    const out: Record<string, unknown> = { hookEventName: 'PreToolUse' };
-    let decision = 'allow';
-    let rehydrated = false;
-    if (isWhitelisted(name, policy)) {
-      const r = rehydrateDeep(input);
-      if (JSON.stringify(r) !== JSON.stringify(input)) {
-        if (name === 'Bash' && EGRESS_RE.test(String(input.command ?? ''))) {
-          audit(session, 'PreToolUse', name, {}, 'deny', Date.now() - t0);
-          return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'cc-hush: refusing to rehydrate PII tokens into a command that can send data off the machine. Ask the user to run this step.' } };
+  private async mapText(content: unknown, transform: (text: string) => Promise<string>): Promise<unknown> {
+    if (typeof content === 'string') return transform(content);
+    for (const block of blocksOf(content)) if (block.type === 'text' && typeof block.text === 'string') block.text = await transform(block.text);
+    return content;
+  }
+
+  async redactBody(body: any): Promise<void> {
+    body.system = await this.mapText(body.system, (text) => this.scanWithModel(text));
+    const toolUseById = new Map<string, ToolUse>();
+    for (const message of body.messages ?? []) {
+      if (message.role === 'assistant') {
+        for (const block of blocksOf(message.content)) if (block.type === 'tool_use' && block.id) toolUseById.set(block.id, { name: block.name, input: block.input });
+      } else if (message.role === 'user') {
+        message.content = await this.mapText(message.content, (text) => this.scanWithModel(text));
+        for (const block of blocksOf(message.content)) {
+          if (block.type !== 'tool_result') continue;
+          const tool = toolUseById.get(block.tool_use_id ?? '');
+          block.content = await this.mapText(block.content, (text) => this.redactToolResult(text, tool));
         }
-        // updatedInput applies on its own; no permissionDecision here, so the user's normal permission prompt still fires.
-        input = r; out.updatedInput = input; rehydrated = true;
       }
     }
-    if (name === 'Bash' || name.startsWith('mcp__')) {
-      const v = guard(name, input, ev.cwd ?? process.cwd(), loadSchema(findProject(ev.cwd)));
-      if (v) { decision = v.decision; out.permissionDecision = v.decision; out.permissionDecisionReason = `cc-hush: ${v.reason}`; }
-    }
-    audit(session, 'PreToolUse', name, {}, decision + (rehydrated ? '+rehydrate' : ''), Date.now() - t0);
-    return { hookSpecificOutput: out };
   }
+}
+
+const NETWORK_COMMAND = /\b(curl|wget|ssh|scp|sftp|rsync|nc|ncat|telnet|gh|aws|gcloud|az|kubectl|helm|mail|mailx|sendmail|http|xh|Invoke-WebRequest|Invoke-RestMethod)\b|\bgit\s+(push|remote)\b|\b(docker|npm|cargo|twine)\s+(push|publish|upload)\b/i;
+
+const deny = (reason: string) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `cc-hush: ${reason}` } });
+const block = (reason: string) => ({ decision: 'block', reason: `cc-hush: ${reason}` });
+
+async function onUserPromptSubmit(event: any, policy: Policy, startedAt: number) {
+  const spans = await detect(String(event.prompt ?? ''), policy.allowlist);
+  const secretCount = spans.filter((s) => s.label === 'secret').length;
+  const labels: LabelCounts = {};
+  countLabels(labels, spans);
+  audit(event.session_id, 'UserPromptSubmit', null, labels, secretCount ? 'block' : 'allow', startedAt);
+  if (!secretCount) return {};
+  return block(`prompt contains ${secretCount} secret(s). Remove the secret and reference it by name or env var instead.`);
+}
+
+function onPreToolUse(event: any, policy: Policy, startedAt: number) {
+  const toolName: string = event.tool_name ?? '';
+  let input: Record<string, unknown> = event.tool_input ?? {};
+  const output: Record<string, unknown> = { hookEventName: 'PreToolUse' };
+  let rehydrated = false;
+
+  if (isWhitelisted(toolName, policy)) {
+    const withRealValues = rehydrateDeep(input);
+    rehydrated = JSON.stringify(withRealValues) !== JSON.stringify(input);
+    const wouldLeaveTheMachine = toolName === 'Bash' && NETWORK_COMMAND.test(String(input.command ?? ''));
+    if (rehydrated && wouldLeaveTheMachine) {
+      audit(event.session_id, 'PreToolUse', toolName, {}, 'deny', startedAt);
+      return deny('refusing to rehydrate PII tokens into a command that can send data off the machine. Ask the user to run this step.');
+    }
+    if (rehydrated) input = output.updatedInput = withRealValues;
+  }
+
+  let decision = 'allow';
+  const runsShellOrSql = toolName === 'Bash' || toolName.startsWith('mcp__');
+  if (runsShellOrSql) {
+    const cwd = event.cwd ?? process.cwd();
+    const verdict = guard(toolName, input, cwd, loadSchema(findProject(cwd)));
+    if (verdict) {
+      decision = output.permissionDecision = verdict.decision;
+      output.permissionDecisionReason = `cc-hush: ${verdict.reason}`;
+    }
+  }
+  audit(event.session_id, 'PreToolUse', toolName, {}, rehydrated ? `${decision}+rehydrate` : decision, startedAt);
+  return { hookSpecificOutput: output };
+}
+
+async function handleHook(event: any): Promise<unknown> {
+  const startedAt = Date.now();
+  if (event.session_id && event.cwd) cwdBySession.set(event.session_id, event.cwd);
+  const policy = policyFor(event.cwd);
+  if (event.hook_event_name === 'UserPromptSubmit') return onUserPromptSubmit(event, policy, startedAt);
+  if (event.hook_event_name === 'PreToolUse') return onPreToolUse(event, policy, startedAt);
   return {};
 }
 
-// ---------- proxy ----------
-function readBody(req: http.IncomingMessage): Promise<Buffer> {
-  return new Promise((res, rej) => { const c: Buffer[] = []; req.on('data', (d) => c.push(d)); req.on('end', () => res(Buffer.concat(c))); req.on('error', rej); });
+async function hookResponseFailingClosed(req: http.IncomingMessage): Promise<unknown> {
+  await modelLoaded;
+  const event = JSON.parse((await readBody(req)).toString('utf8'));
+  try {
+    return await handleHook(event);
+  } catch (error) {
+    console.error('[hush] hook failed, failing closed:', error);
+    const reason = `hook error, failing closed: ${(error as Error).message}`;
+    return event.hook_event_name === 'PreToolUse' ? deny(reason) : block(reason);
+  }
 }
 
-function json(res: http.ServerResponse, code: number, body: unknown) {
-  const s = JSON.stringify(body);
-  res.writeHead(code, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(s) });
-  res.end(s);
+function sessionIdOf(body: any): string | null {
+  try { return JSON.parse(body.metadata?.user_id ?? '{}').session_id ?? null; } catch { return null; }
 }
 
-let ready: Promise<void>;
+async function redactRequest(raw: Buffer, startedAt: number): Promise<Buffer> {
+  const body = JSON.parse(raw.toString('utf8'));
+  const session = sessionIdOf(body);
+  const policy = policyFor(session ? cwdBySession.get(session) : undefined);
+  const redaction = new RequestRedaction(policy.allowlist);
+  await redaction.redactBody(body);
+  audit(session, 'proxy', null, redaction.labels, 'redacted', startedAt);
+  return Buffer.from(JSON.stringify(body));
+}
 
 async function proxy(req: http.IncomingMessage, res: http.ServerResponse) {
-  const t0 = Date.now();
+  const startedAt = Date.now();
   let body = await readBody(req);
-  await ready; // hold requests until the model is loaded: nothing leaves unredacted
-  if (req.method === 'POST' && body.length) {
-    // Fail closed: any error here means the body is NOT forwarded.
+  await modelLoaded;
+  const hasBodyToRedact = req.method === 'POST' && body.length > 0;
+  if (hasBodyToRedact) {
     try {
-      const parsed = JSON.parse(body.toString('utf8'));
-      let sid: string | null = null;
-      try { sid = JSON.parse(parsed.metadata?.user_id ?? '{}').session_id ?? null; } catch { /* no session in metadata */ }
-      // Unknown session: strictest policy (no allowlist). Never borrow another session's project policy.
-      const cwd = sid ? sessionCwd.get(sid) : undefined;
-      const labels = await redactBody(parsed, policyFor(cwd).allowlist);
-      body = Buffer.from(JSON.stringify(parsed));
-      audit(sid, 'proxy', null, labels, 'redacted', Date.now() - t0);
-    } catch (e) {
-      console.error('[hush] redaction failed, request dropped:', (e as Error).message);
-      audit(null, 'proxy', null, {}, 'dropped', Date.now() - t0);
-      return json(res, 502, { type: 'error', error: { type: 'api_error', message: `cc-hush: redaction failed, request not forwarded: ${(e as Error).message}` } });
+      body = await redactRequest(body, startedAt);
+    } catch (error) {
+      console.error('[hush] redaction failed, request dropped:', (error as Error).message);
+      audit(null, 'proxy', null, {}, 'dropped', startedAt);
+      return apiError(res, `redaction failed, request not forwarded: ${(error as Error).message}`);
     }
   }
+  forwardUpstream(req, res, body);
+}
+
+function forwardUpstream(req: http.IncomingMessage, res: http.ServerResponse, body: Buffer) {
   const headers: http.OutgoingHttpHeaders = { ...req.headers, host: upstream.host, 'content-length': body.length };
   delete headers['transfer-encoding'];
-  const mod = upstream.protocol === 'https:' ? https : http;
-  const up = mod.request({ host: upstream.hostname, port: upstream.port || undefined, method: req.method, path: upstream.pathname.replace(/\/$/, '') + req.url, headers }, (r) => {
-    const h = { ...r.headers }; delete h['transfer-encoding'];
-    res.writeHead(r.statusCode ?? 502, h);
-    r.pipe(res);
+  const client = upstream.protocol === 'https:' ? https : http;
+  const options = { host: upstream.hostname, port: upstream.port || undefined, method: req.method, path: upstream.pathname.replace(/\/$/, '') + req.url, headers };
+  const upstreamRequest = client.request(options, (upstreamResponse) => {
+    const responseHeaders = { ...upstreamResponse.headers };
+    delete responseHeaders['transfer-encoding'];
+    res.writeHead(upstreamResponse.statusCode ?? 502, responseHeaders);
+    upstreamResponse.pipe(res);
   });
-  up.on('error', (e) => json(res, 502, { type: 'error', error: { type: 'api_error', message: `cc-hush: upstream ${upstream.href} unreachable: ${e.message}` } }));
-  up.end(body);
+  upstreamRequest.on('error', (error) => apiError(res, `upstream ${upstream.href} unreachable: ${error.message}`));
+  upstreamRequest.end(body);
 }
+
+function readBody(req: http.IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(chunk)).on('end', () => resolve(Buffer.concat(chunks))).on('error', reject);
+  });
+}
+
+function json(res: http.ServerResponse, status: number, body: unknown) {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) });
+  res.end(payload);
+}
+
+const apiError = (res: http.ServerResponse, message: string) =>
+  json(res, 502, { type: 'error', error: { type: 'api_error', message: `cc-hush: ${message}` } });
+
+const health = () => ({ ok: true, version: VERSION, model: modelReady() ? 'ready' : 'loading', device, upstream: upstream.href, vault: size(), pid: process.pid });
+
+let modelLoaded: Promise<void>;
 
 const server = http.createServer(async (req, res) => {
   const url = req.url ?? '/';
   try {
-    if (url === '/health') return json(res, 200, { ok: true, version: VERSION, model: modelReady() ? 'ready' : 'loading', device, upstream: upstream.href, vault: size(), pid: process.pid });
-    if (url === '/debug/vault' || url === '/shutdown' || url === '/hook') {
-      if (!authed(req)) return json(res, 401, { error: `cc-hush: send header x-hush-token from ${TOKEN_FILE}` });
+    const hasToken = req.headers['x-hush-token'] === TOKEN;
+    if (TOKEN_PROTECTED_PATHS.has(url) && !hasToken) return json(res, 401, { error: `cc-hush: send header x-hush-token from ${TOKEN_FILE}` });
+    if (POST_ONLY_PATHS.has(url) && req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+    switch (url) {
+      case '/health': return json(res, 200, health());
+      case '/debug/vault': return json(res, 200, dump());
+      case '/shutdown': json(res, 200, { bye: true }); setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS); return;
+      case '/hook': return json(res, 200, await hookResponseFailingClosed(req));
+      default: return proxy(req, res);
     }
-    if (url === '/debug/vault') return json(res, 200, dump());
-    if (url === '/shutdown' && req.method === 'POST') { json(res, 200, { bye: true }); setTimeout(() => process.exit(0), 50); return; }
-    if (url === '/hook' && req.method === 'POST') {
-      await ready;
-      const ev = JSON.parse((await readBody(req)).toString('utf8'));
-      try { return json(res, 200, await handleHook(ev)); } catch (e) {
-        console.error('[hush] hook failed, failing closed:', e);
-        const reason = `cc-hush: hook error, failing closed: ${(e as Error).message}`;
-        return json(res, 200, ev.hook_event_name === 'PreToolUse'
-          ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }
-          : { decision: 'block', reason });
-      }
-    }
-    await proxy(req, res);
-  } catch (e) {
-    console.error('[hush]', e);
-    if (!res.headersSent) json(res, 500, { error: String(e) });
+  } catch (error) {
+    console.error('[hush]', error);
+    if (!res.headersSent) json(res, 500, { error: String(error) });
   }
 });
 server.keepAliveTimeout = 65_000;
 server.requestTimeout = 0;
 server.headersTimeout = 0;
 
-server.on('error', (e: NodeJS.ErrnoException) => {
-  if (e.code === 'EADDRINUSE') { console.log('[hush] port in use, another daemon won'); process.exit(0); }
-  throw e;
+server.on('error', (error: NodeJS.ErrnoException) => {
+  if (error.code !== 'EADDRINUSE') throw error;
+  console.log('[hush] port in use, another daemon won');
+  process.exit(0);
 });
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`[hush] v${VERSION} listening on 127.0.0.1:${PORT}, upstream ${upstream.href}, device ${device}`);
-  ready = loadModel(path.join(DATA, 'models'), device).catch((e) => { console.error('[hush] model load failed', e); process.exit(1); });
+  modelLoaded = loadModel(path.join(DATA, 'models'), device).catch((error) => { console.error('[hush] model load failed', error); process.exit(1); });
 });

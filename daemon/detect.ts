@@ -1,204 +1,195 @@
-// Two detectors over text: deterministic regex (Belgian identifiers + secrets) and openai/privacy-filter.
 import { env, AutoTokenizer, AutoModelForTokenClassification } from '@huggingface/transformers';
 import { tokenize, type Span } from './vault.ts';
 
-export const THRESHOLD = 0.5;
-export const LABELS = ['account_number', 'private_address', 'private_email', 'private_person', 'private_phone', 'private_url', 'private_date', 'secret'];
+const MODEL_ID = 'openai/privacy-filter';
+const MODEL_CONTEXT_TOKENS = 128_000;
+const MIN_SPAN_CONFIDENCE = 0.5;
+const MIN_ALLOWLIST_FRAGMENT_LENGTH = 3;
 
-// ---------- regex ----------
+const mod97Matches = (digits: string, check: string) => 97 - Number(BigInt(digits) % 97n) === Number(check);
 
-const mod97ok = (digits: string, check: string) => 97 - (Number(BigInt(digits) % 97n)) === Number(check);
-
-function rrnValid(raw: string): boolean {
-  const d = raw.replace(/\D/g, '');
-  if (d.length !== 11) return false;
-  const body = d.slice(0, 9), check = d.slice(9);
-  return mod97ok(body, check) || mod97ok('2' + body, check);
+function isRijksregisternummer(raw: string): boolean {
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length !== 11) return false;
+  const body = digits.slice(0, 9), check = digits.slice(9);
+  const bornAfter1999 = '2' + body;
+  return mod97Matches(body, check) || mod97Matches(bornAfter1999, check);
 }
 
-function ibanValid(raw: string): boolean {
-  const s = raw.replace(/\s/g, '').toUpperCase();
-  const rearranged = s.slice(4) + s.slice(0, 4);
-  const numeric = rearranged.replace(/[A-Z]/g, (c) => String(c.charCodeAt(0) - 55));
-  return BigInt(numeric) % 97n === 1n;
+function isIban(raw: string): boolean {
+  const compact = raw.replace(/\s/g, '').toUpperCase();
+  const countryAndCheckMovedToEnd = compact.slice(4) + compact.slice(0, 4);
+  const lettersAsNumbers = countryAndCheckMovedToEnd.replace(/[A-Z]/g, (c) => String(c.charCodeAt(0) - 55));
+  return BigInt(lettersAsNumbers) % 97n === 1n;
 }
 
-type Rule = { re: RegExp; label: string; valid?: (m: string) => boolean; group?: number };
+const RIJKSREGISTERNUMMER = /\b\d{2}[.\- ]?\d{2}[.\- ]?\d{2}[.\- ]?\d{3}[.\- ]?\d{2}\b/g;
+const BELGIAN_IBAN = /\bBE\d{2}(?: ?\d{4}){3}\b/gi;
+const BELGIAN_VAT = /\bBE ?0\d{3}[. ]?\d{3}[. ]?\d{3}\b/g;
+const BELGIAN_PHONE = /\+32 ?\(?0?\)? ?\d(?:[ .\-]?\d){7,8}\b/g;
+const AWS_ACCESS_KEY = /\bAKIA[0-9A-Z]{16}\b/g;
+const GITHUB_TOKEN = /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b/g;
+const GITHUB_FINE_GRAINED_TOKEN = /\bgithub_pat_[A-Za-z0-9_]{22,}\b/g;
+const SLACK_TOKEN = /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g;
+const SK_API_KEY = /\bsk-[A-Za-z0-9_-]{20,}\b/g;
+const JWT = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
+const PRIVATE_KEY_HEADER = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
+const SECRET_ASSIGNMENT = /\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|password|passwd|client[_-]?secret)\b\s*[=:]\s*["']?([A-Za-z0-9_\-\/+.]{12,})["']?/gi;
+
+type Rule = { re: RegExp; label: string; checksum?: (match: string) => boolean; valueGroup?: number };
 
 const RULES: Rule[] = [
-  { re: /\b\d{2}[.\- ]?\d{2}[.\- ]?\d{2}[.\- ]?\d{3}[.\- ]?\d{2}\b/g, label: 'account_number', valid: rrnValid },
-  { re: /\bBE\d{2}(?: ?\d{4}){3}\b/gi, label: 'account_number', valid: ibanValid },
-  { re: /\bBE ?0\d{3}[. ]?\d{3}[. ]?\d{3}\b/g, label: 'account_number' },
-  { re: /\+32 ?\(?0?\)? ?\d(?:[ .\-]?\d){7,8}\b/g, label: 'private_phone' },
-  // gitleaks-style secrets
-  { re: /\bAKIA[0-9A-Z]{16}\b/g, label: 'secret' },
-  { re: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b/g, label: 'secret' },
-  { re: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/g, label: 'secret' },
-  { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, label: 'secret' },
-  { re: /\bsk-[A-Za-z0-9_-]{20,}\b/g, label: 'secret' },
-  { re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, label: 'secret' },
-  { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g, label: 'secret' },
-  { re: /\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|password|passwd|client[_-]?secret)\b\s*[=:]\s*["']?([A-Za-z0-9_\-\/+.]{12,})["']?/gi, label: 'secret', group: 1 },
+  { label: 'account_number', re: RIJKSREGISTERNUMMER, checksum: isRijksregisternummer },
+  { label: 'account_number', re: BELGIAN_IBAN, checksum: isIban },
+  { label: 'account_number', re: BELGIAN_VAT },
+  { label: 'private_phone', re: BELGIAN_PHONE },
+  { label: 'secret', re: AWS_ACCESS_KEY },
+  { label: 'secret', re: GITHUB_TOKEN },
+  { label: 'secret', re: GITHUB_FINE_GRAINED_TOKEN },
+  { label: 'secret', re: SLACK_TOKEN },
+  { label: 'secret', re: SK_API_KEY },
+  { label: 'secret', re: JWT },
+  { label: 'secret', re: PRIVATE_KEY_HEADER },
+  { label: 'secret', re: SECRET_ASSIGNMENT, valueGroup: 1 },
 ];
 
 export function regexDetect(text: string): Span[] {
   const spans: Span[] = [];
-  for (const r of RULES) {
-    r.re.lastIndex = 0;
-    for (const m of text.matchAll(r.re)) {
-      let start = m.index!, value = m[0];
-      if (r.group) {
-        value = m[r.group];
-        start += m[0].indexOf(value);
-      }
-      if (r.valid && !r.valid(value)) continue;
-      spans.push({ start, end: start + value.length, label: r.label, score: 1 });
+  for (const rule of RULES) {
+    for (const match of text.matchAll(rule.re)) {
+      const value = rule.valueGroup ? match[rule.valueGroup] : match[0];
+      if (rule.checksum && !rule.checksum(value)) continue;
+      const start = match.index! + match[0].indexOf(value);
+      spans.push({ start, end: start + value.length, label: rule.label, score: 1 });
     }
   }
   return spans;
 }
 
-// ---------- model ----------
-
 let tokenizer: any, model: any;
-let loading: Promise<void> | null = null;
+let loading: Promise<void> | undefined;
 
-export function modelReady(): boolean {
-  return !!model;
-}
+export const modelReady = () => !!model;
 
 export function loadModel(cacheDir: string, device: string): Promise<void> {
-  if (loading) return loading;
   env.cacheDir = cacheDir;
-  const id = 'openai/privacy-filter';
-  loading = (async () => {
-    const t0 = Date.now();
-    tokenizer = await AutoTokenizer.from_pretrained(id);
-    model = await AutoModelForTokenClassification.from_pretrained(id, { dtype: 'q4', device: device as any });
-    console.log(`[hush] model ready on ${device} in ${Date.now() - t0}ms`);
+  loading ??= (async () => {
+    const started = Date.now();
+    tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID);
+    model = await AutoModelForTokenClassification.from_pretrained(MODEL_ID, { dtype: 'q4', device: device as any });
+    console.log(`[hush] model ready on ${device} in ${Date.now() - started}ms`);
   })();
   return loading;
 }
 
-function softmaxMax(row: Float32Array | number[]): [number, number] {
-  let best = 0;
-  for (let i = 1; i < row.length; i++) if (row[i] > row[best]) best = i;
+function argmax(row: Float32Array): { index: number; probability: number } {
+  let index = 0;
+  for (let i = 1; i < row.length; i++) if (row[i] > row[index]) index = i;
   let sum = 0;
-  for (let i = 0; i < row.length; i++) sum += Math.exp(row[i] - row[best]);
-  return [best, 1 / sum];
+  for (const x of row) sum += Math.exp(x - row[index]);
+  return { index, probability: 1 / sum };
 }
 
-export async function modelDetect(text: string): Promise<Span[]> {
-  if (!model) await loading;
+type TaggedToken = { start: number; end: number; tag: string; score: number };
+
+async function tagEachToken(text: string): Promise<TaggedToken[]> {
   const inputs = tokenizer([text], { padding: true, truncation: false });
-  if (inputs.input_ids.dims[1] >= 128_000) throw new Error('text exceeds model context, refusing to scan partially');
+  if (inputs.input_ids.dims[1] >= MODEL_CONTEXT_TOKENS) throw new Error('text exceeds model context, refusing to scan partially');
   const { logits } = await model(inputs);
   const ids: number[] = inputs.input_ids[0].tolist().map(Number);
-  const id2label: Record<number, string> = model.config.id2label;
-  const nLabels = logits.dims[2];
-  const data = logits.data as Float32Array;
+  const labelCount: number = logits.dims[2];
+  const tagged: TaggedToken[] = [];
+  let searchFrom = 0;
+  ids.forEach((id, i) => {
+    const piece: string = tokenizer.decode([id], { skip_special_tokens: true });
+    const at = piece ? text.indexOf(piece, searchFrom) : -1;
+    if (at < 0) return;
+    searchFrom = at + piece.length;
+    const { index, probability } = argmax(logits.data.subarray(i * labelCount, (i + 1) * labelCount));
+    const leadingWhitespace = piece.length - piece.trimStart().length;
+    tagged.push({ start: at + leadingWhitespace, end: searchFrom, tag: model.config.id2label[index] ?? 'O', score: probability });
+  });
+  return tagged;
+}
 
-  // Map tokens to char offsets by decoding each token and searching forward.
-  // ponytail: sequential indexOf; tokens that split a multibyte char are skipped. Good enough for span boundaries.
+const splitBioesTag = (tag: string): [prefix: string, label: string] => (tag[1] === '-' ? [tag[0], tag.slice(2)] : ['I', tag]);
+
+function groupBioesTags(tokens: TaggedToken[]): Span[] {
   const spans: Span[] = [];
-  let cursor = 0;
-  let open: (Span & { n: number }) | null = null;
+  let open: { start: number; end: number; label: string; scoreSum: number; count: number } | null = null;
   const close = () => {
-    if (open && open.score / open.n >= THRESHOLD) spans.push({ start: open.start, end: open.end, label: open.label, score: open.score / open.n });
+    if (open && open.scoreSum / open.count >= MIN_SPAN_CONFIDENCE) spans.push({ start: open.start, end: open.end, label: open.label, score: open.scoreSum / open.count });
     open = null;
   };
-  for (let j = 0; j < ids.length; j++) {
-    const piece: string = tokenizer.decode([ids[j]], { skip_special_tokens: true });
-    if (piece === '') continue;
-    const at = text.indexOf(piece, cursor);
-    if (at < 0) continue;
-    const trimmedStart = at + (piece.length - piece.trimStart().length);
-    const end = at + piece.length;
-    cursor = end;
-    const [idx, score] = softmaxMax(data.subarray(j * nLabels, (j + 1) * nLabels));
-    const entity = id2label[idx] ?? 'O';
-    if (entity === 'O') { close(); continue; }
-    const prefix = entity[1] === '-' ? entity[0] : 'I';
-    const label = entity[1] === '-' ? entity.slice(2) : entity;
-    const extend = open && open.label === label && prefix !== 'B' && prefix !== 'S';
-    if (extend) {
-      open!.end = end; open!.score += score; open!.n++;
-      if (prefix === 'E') close();
+  for (const token of tokens) {
+    if (token.tag === 'O') { close(); continue; }
+    const [prefix, label] = splitBioesTag(token.tag);
+    const continuesOpenSpan = open?.label === label && prefix !== 'B' && prefix !== 'S';
+    if (continuesOpenSpan) {
+      open!.end = token.end; open!.scoreSum += token.score; open!.count++;
     } else {
       close();
-      open = { start: trimmedStart, end, label, score, n: 1 };
-      if (prefix === 'S') close();
+      open = { start: token.start, end: token.end, label, scoreSum: token.score, count: 1 };
     }
+    if (prefix === 'E' || prefix === 'S') close();
   }
   close();
   return spans;
 }
 
-// ---------- merge ----------
+export async function modelDetect(text: string): Promise<Span[]> {
+  await loading;
+  return groupBioesTags(await tagEachToken(text));
+}
 
 export function mergeSpans(spans: Span[], text: string, allowlist: string[]): Span[] {
-  const allow = allowlist.map((a) => a.trim().toLowerCase()).filter(Boolean);
-  // A span is allowlisted when it IS an allowlisted term, or a piece of one ("Van Gossum" of "Ewout Van Gossum").
-  // Containing a term is not enough: "alice@qmino.com" stays PII when only "qmino.com" is allowlisted.
-  const kept = spans
-    .filter((s) => s.end > s.start)
-    .filter((s) => {
-      const v = text.slice(s.start, s.end).trim().toLowerCase();
-      return !allow.some((a) => v === a || (v.length >= 3 && a.includes(v)));
-    })
-    .sort((a, b) => a.start - b.start || b.score - a.score);
-  // Overlapping spans become one span covering their union; the label comes from the highest score.
-  const out: Span[] = [];
-  for (const s of kept) {
-    const last = out[out.length - 1];
-    if (last && s.start < last.end) {
-      last.end = Math.max(last.end, s.end);
-      if (s.score > last.score) { last.label = s.label; last.score = s.score; }
-      continue;
-    }
-    out.push({ ...s });
+  const terms = allowlist.map((t) => t.trim().toLowerCase()).filter(Boolean);
+  const isTermOrPartOfTerm = (span: Span) => {
+    const value = text.slice(span.start, span.end).trim().toLowerCase();
+    return terms.some((term) => value === term || (value.length >= MIN_ALLOWLIST_FRAGMENT_LENGTH && term.includes(value)));
+  };
+  const candidates = spans.filter((s) => s.end > s.start && !isTermOrPartOfTerm(s)).sort((a, b) => a.start - b.start || b.score - a.score);
+  const merged: Span[] = [];
+  for (const span of candidates) {
+    const previous = merged.at(-1);
+    const overlaps = previous && span.start < previous.end;
+    if (!overlaps) { merged.push({ ...span }); continue; }
+    previous.end = Math.max(previous.end, span.end);
+    if (span.score > previous.score) { previous.label = span.label; previous.score = span.score; }
   }
-  return out;
+  return merged;
 }
 
 export async function detect(text: string, allowlist: string[], useModel = true): Promise<Span[]> {
   const spans = regexDetect(text);
   if (useModel && text.trim()) spans.push(...(await modelDetect(text)));
-  // Never re-tag inside an existing <PII:...> token (e.g. the counter digits).
-  const tokens = [...text.matchAll(/<PII:[a-z_]+:\d+>/g)].map((m) => [m.index!, m.index! + m[0].length]);
-  const clean = spans.filter((s) => !tokens.some(([a, b]) => s.start < b && s.end > a));
-  return mergeSpans(clean, text, allowlist);
+  const existingTokens = [...text.matchAll(/<PII:[a-z_]+:\d+>/g)].map((m) => [m.index!, m.index! + m[0].length]);
+  const insideExistingToken = (s: Span) => existingTokens.some(([start, end]) => s.start < end && s.end > start);
+  return mergeSpans(spans.filter((s) => !insideExistingToken(s)), text, allowlist);
 }
 
-// ---------- MCP JSON key pass ----------
-
-const KEY_LABELS: Record<string, string> = {
+const PII_LABEL_BY_JSON_KEY: Record<string, string> = {
   emailAddress: 'private_email', displayName: 'private_person', accountId: 'account_number',
   author: 'private_person', reporter: 'private_person', assignee: 'private_person', creator: 'private_person',
 };
 
-export function mcpKeyPass(v: unknown, keyLabel?: string): unknown {
-  if (typeof v === 'string') return keyLabel && v.trim() ? tokenize(v, keyLabel) : v;
-  if (Array.isArray(v)) return v.map((x) => mcpKeyPass(x, keyLabel));
-  if (v && typeof v === 'object') {
-    const o = v as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    const isMention = o.type === 'mention';
-    for (const [k, x] of Object.entries(o)) {
-      if (isMention && k === 'attrs' && x && typeof x === 'object') {
-        const attrs = { ...(x as Record<string, unknown>) };
-        if (typeof attrs.text === 'string') attrs.text = tokenize(attrs.text, 'private_person');
-        out[k] = attrs;
-      } else out[k] = mcpKeyPass(x, KEY_LABELS[k]);
-    }
-    return out;
+export function mcpKeyPass(value: unknown, label?: string): unknown {
+  if (typeof value === 'string') return label && value.trim() ? tokenize(value, label) : value;
+  if (Array.isArray(value)) return value.map((item) => mcpKeyPass(item, label));
+  if (!value || typeof value !== 'object') return value;
+  const object = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(object)) {
+    const mentionAttrs = object.type === 'mention' && key === 'attrs' ? (child as Record<string, unknown>) : null;
+    out[key] = typeof mentionAttrs?.text === 'string'
+      ? { ...mentionAttrs, text: tokenize(mentionAttrs.text, 'private_person') }
+      : mcpKeyPass(child, PII_LABEL_BY_JSON_KEY[key]);
   }
-  return v;
+  return out;
 }
 
-/** Apply the key pass to an MCP tool result string if it holds JSON. */
 export function mcpKeyPassText(text: string): string {
-  const t = text.trim();
-  if (!(t.startsWith('{') || t.startsWith('['))) return text;
-  try { return JSON.stringify(mcpKeyPass(JSON.parse(t))); } catch { return text; }
+  const looksLikeJson = /^\s*[{[]/.test(text);
+  if (!looksLikeJson) return text;
+  try { return JSON.stringify(mcpKeyPass(JSON.parse(text))); } catch { return text; }
 }
