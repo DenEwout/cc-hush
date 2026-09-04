@@ -378,7 +378,7 @@ findstr "model ready" %USERPROFILE%\.cc-hush\daemon.log</pre>
           <div>
             <div class="eyebrow">Phase 3</div>
             <h2>Make the proxy logic testable, add CI</h2>
-            <p class="why"><code>RequestRedaction</code> is the most security-relevant code and has no unit test because it needs the 900 MB model. Inject <code>detect</code>, stub it, and lock in the review fixes.</p>
+            <p class="why">Done in 0.2.0: <code>RequestRedaction</code> lives in <code>daemon/redaction.ts</code> with <code>detect</code> injected, <code>test/proxy.test.ts</code> and <code>test/hooks.test.ts</code> run the daemon against a fake downstream proxy without the model, and <code>npm run test:e2e</code> drives the real <code>claude -p</code>. Tick the first two steps; CI remains.</p>
           </div>
           <div class="phase-progress"><span class="count">0 / 0</span><div class="bar"><i></i></div></div>
         </div>
