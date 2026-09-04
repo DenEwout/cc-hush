@@ -1,6 +1,11 @@
 # cc-hush
 
-Privacy plugin for [Claude Code](https://code.claude.com). Keeps PII and secrets out of the Anthropic API and out of third-party tools, blocks destructive commands, keeps ad-hoc SQL away from PII columns, and writes a local audit log.
+Privacy layer for [Claude Code](https://code.claude.com). Keeps PII and secrets out of the Anthropic API and out of third-party tools, blocks destructive commands, keeps ad-hoc SQL away from PII columns, and writes a local audit log.
+
+Two parts:
+
+- **`cc-hush`**, an npm package: the local daemon plus a CLI that installs it as a startup service.
+- **`hush`**, a Claude Code plugin: hooks and skills that talk to the daemon.
 
 TypeScript, Node 24, no framework, no build step. Detection runs locally with [`openai/privacy-filter`](https://huggingface.co/openai/privacy-filter) (q4, about 917 MB) plus deterministic regexes for Belgian identifiers and common secret formats.
 
@@ -24,32 +29,45 @@ Claude Code --http hooks--> hush daemon --/v1/*--> upstream (Anthropic or your o
 
 ## Install
 
+Node 24 or newer.
+
 ```
+npm i -g cc-hush
+cc-hush install
 claude plugin marketplace add DenEwout/cc-hush
 claude plugin install hush
 ```
 
-Then in Claude Code run the `hush-setup` skill, or by hand:
+`cc-hush install` does four things, and is safe to re-run after `npm i -g cc-hush@latest` or a Node upgrade:
+
+1. Downloads the model into `~/.cc-hush/models` with progress.
+2. Registers a startup service for your user: a Windows scheduled task at logon (hidden, restarts on failure), a macOS launch agent (`~/Library/LaunchAgents/com.cc-hush.daemon.plist`), or a Linux systemd user unit (`~/.config/systemd/user/cc-hush.service`; headless boxes also need `loginctl enable-linger`).
+3. Stops any running daemon and starts the new one through the service, waits for `/health`.
+4. Sets `ANTHROPIC_BASE_URL` to `http://127.0.0.1:47831` in `~/.claude/settings.json` (`CLAUDE_CONFIG_DIR` respected). If the variable already holds another value it is left alone and you are told what to do.
+
+Then restart Claude Code. The plugin's SessionStart hook reports `cc-hush daemon vX running (model ready)`. If the service is not running the hook starts `cc-hush start` itself and tells you to re-run `cc-hush install`.
+
+Other commands: `cc-hush status`, `cc-hush stop`, `cc-hush start` (foreground; `--log` appends to `~/.cc-hush/daemon.log`).
+
+### Uninstall
 
 ```
-cd <plugin dir> && npm install --omit=dev
-node hooks/ensure-daemon.ts        # downloads the model on first start
-curl 127.0.0.1:47831/health        # wait for "model":"ready"
+cc-hush uninstall        # stops the daemon, removes the startup service
+npm rm -g cc-hush
+claude plugin uninstall hush
 ```
 
-Add to `~/.claude/settings.json`:
+`~/.cc-hush` (model, token, audit log) is kept; delete it by hand. Remove the `ANTHROPIC_BASE_URL` line from `~/.claude/settings.json`.
 
-```json
-{ "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:47831" } }
-```
+### Machine config
 
-Machine config at `${CLAUDE_PLUGIN_DATA}/config.json` (default `~/.claude/plugins/data/hush/config.json`):
+`~/.cc-hush/config.json`, optional:
 
 ```json
 { "upstream": "https://api.anthropic.com", "device": "cpu" }
 ```
 
-`device` defaults to `dml` on Windows and `cpu` elsewhere; `cuda` works where onnxruntime-node finds it.
+`upstream` is where the daemon forwards API traffic; point it at another local proxy to chain them. `device` defaults to `dml` on Windows and `cpu` elsewhere; `cuda` works where onnxruntime-node finds it. `HUSH_UPSTREAM`, `HUSH_DEVICE` and `HUSH_DATA` override from the environment. Restart the daemon after changes (`cc-hush install`, or `cc-hush stop` and let the service bring it back).
 
 ## Project config
 
@@ -89,7 +107,7 @@ Scripts referenced from the command (`bash x.sh`, `psql -f x.sql`, `mysql < x.sq
 
 | Skill | Purpose |
 |---|---|
-| `hush-setup` | Install, model download, config, start daemon, settings line. |
+| `hush-setup` | Install the daemon, service, config, settings line; repair; uninstall. |
 | `hush-guide` | What tokens are, how to use them, what guard messages mean. |
 | `hush-schema` | Build `.hush/schema.json` from migrations, ORM models or live `information_schema`. Column comments `pii:<label>` win over name heuristics. |
 | `hush-query` | Writing ad-hoc SQL that avoids PII columns. |
@@ -99,19 +117,19 @@ Scripts referenced from the command (`bash x.sh`, `psql -f x.sql`, `mysql < x.sq
 
 - `GET /health` version, model state, device, upstream, vault size.
 - `GET /debug/vault` the token map.
-- `POST /shutdown` stop the daemon (used on version upgrade).
+- `POST /shutdown` stop the daemon.
 - `POST /hook` hook endpoint.
 
-The last three require the header `x-hush-token` with the contents of `${CLAUDE_PLUGIN_DATA}/token`:
+The last three require the header `x-hush-token` with the contents of `~/.cc-hush/token`:
 
 ```
-curl -H "x-hush-token: $(cat ~/.claude/plugins/data/hush/token)" 127.0.0.1:47831/debug/vault
+curl -H "x-hush-token: $(cat ~/.cc-hush/token)" 127.0.0.1:47831/debug/vault
 ```
 - Anything else is proxied to `upstream`.
 
 ## Storage
 
-`${CLAUDE_PLUGIN_DATA}/`: `models/`, `config.json`, `token`, `audit.sqlite` (`audit(ts, session_id, event, tool_name, label, count, decision, latency_ms)`, never values), `daemon.log`.
+`~/.cc-hush/`: `models/`, `config.json`, `token`, `audit.sqlite` (`audit(ts, session_id, event, tool_name, label, count, decision, latency_ms)`, never values), `daemon.log`, and on Windows the scheduled task XML.
 
 ## Limits
 
@@ -119,14 +137,17 @@ curl -H "x-hush-token: $(cat ~/.claude/plugins/data/hush/token)" 127.0.0.1:47831
 - The model is English-trained. Dutch names are partly covered; a multilingual NER model is a planned addition if misses show up.
 - The local transcript keeps raw values. Only outbound traffic is redacted.
 - Redaction is memoized per block by content hash, which keeps prompt caching stable.
+- The service pins the Node binary that ran `cc-hush install`. After switching Node versions (nvm, fnm, volta), re-run `cc-hush install`.
 
 ## Development
 
 ```
 npm install
 npm test
-HUSH_UPSTREAM=http://127.0.0.1:47999 node daemon/server.ts
+HUSH_UPSTREAM=http://127.0.0.1:47999 HUSH_DATA=/tmp/hush node bin/cc-hush.ts start
 ```
+
+Repo layout: `bin/` and `daemon/` are the npm package (see `files` in `package.json`); `plugin/` is the Claude Code plugin, referenced from `.claude-plugin/marketplace.json`. To try the plugin from a checkout: `claude plugin marketplace add /path/to/cc-hush`.
 
 See [docs/](docs/README.md) for the architecture with diagrams and [DESIGN.md](DESIGN.md) for the design and acceptance gates.
 

@@ -129,3 +129,21 @@ test('detect: never re-tag inside an existing token', async () => {
   const spans = await detect('reporter <PII:person:3> rrn 85.07.30-033.28', [], false);
   assert.deepEqual(spans.map((s) => s.start), [28]);
 });
+
+test('install: ANTHROPIC_BASE_URL merge into settings.json', async () => {
+  const { mergeBaseUrl, windowsTaskXml, systemdUnit } = await import('../daemon/service.ts');
+  const proxy = 'http://127.0.0.1:47831';
+  const fresh = mergeBaseUrl(undefined);
+  assert.equal(JSON.parse(fresh.text!).env.ANTHROPIC_BASE_URL, proxy);
+  const merged = mergeBaseUrl(JSON.stringify({ env: { FOO: '1' }, hooks: {} }));
+  assert.deepEqual(JSON.parse(merged.text!), { env: { FOO: '1', ANTHROPIC_BASE_URL: proxy }, hooks: {} });
+  assert.equal(mergeBaseUrl(JSON.stringify({ env: { ANTHROPIC_BASE_URL: proxy } })).text, undefined);
+  const other = mergeBaseUrl(JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787/w/claude' } }));
+  assert.equal(other.text, undefined);
+  assert.match(other.note, /left unchanged/);
+  assert.throws(() => mergeBaseUrl('{ not json'));
+  const launcher = { node: '/usr/local/bin/node', script: '/usr/local/lib/node_modules/cc-hush/bin/cc-hush.ts' };
+  assert.match(windowsTaskXml(launcher, 'DOM\\me'), /<Arguments>&quot;\/usr\/local\/lib\/node_modules\/cc-hush\/bin\/cc-hush.ts&quot; start --log<\/Arguments>/);
+  assert.match(windowsTaskXml(launcher, 'a&b'), /<UserId>a&amp;b<\/UserId>/);
+  assert.match(systemdUnit(launcher), /ExecStart="\/usr\/local\/bin\/node" "\/usr\/local\/lib\/node_modules\/cc-hush\/bin\/cc-hush.ts" start --log/);
+});

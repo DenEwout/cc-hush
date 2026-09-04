@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const DATA = process.env.CLAUDE_PLUGIN_DATA ?? path.join(os.homedir(), '.claude', 'plugins', 'data', 'hush');
+const DATA = process.env.HUSH_DATA ?? path.join(os.homedir(), '.cc-hush');
 const HOOK_URL = 'http://127.0.0.1:47831/hook';
 const DAEMON_TIMEOUT_MS = 25_000;
 const EXIT_CODE_BLOCK = 2;
@@ -28,6 +28,6 @@ try {
   process.stdout.write(JSON.stringify(await response.json()));
 } catch (error) {
   const blocked = eventNameOf(rawEvent) === 'UserPromptSubmit' ? 'prompt' : 'tool call';
-  process.stderr.write(`cc-hush: privacy daemon unavailable (${(error as Error).message}); ${blocked} blocked. Run the hush-setup skill or node hooks/ensure-daemon.ts.`);
+  process.stderr.write(`cc-hush: privacy daemon unavailable (${(error as Error).message}); ${blocked} blocked. Run: npm i -g cc-hush && cc-hush install`);
   process.exit(EXIT_CODE_BLOCK);
 }

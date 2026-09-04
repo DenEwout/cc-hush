@@ -201,23 +201,24 @@
         <div class="steps">
 
           <details class="step" id="s1-1">
-            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Install the plugin from the local checkout</div><div class="sub">Marketplace add from the repo path, then install</div></div><div class="tags"></div></summary>
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Install the daemon globally and register the startup service</div><div class="sub">npm package, separate from the plugin</div></div><div class="tags"></div></summary>
             <div class="body">
-              <pre class="cmd">claude plugin marketplace add /home/ewout/IdeaProjects/personal/cc-hush
-claude plugin install hush@cc-hush
-claude plugin list</pre>
-              <div class="check pass"><b>Pass</b><span><code>hush</code> appears in the plugin list with version 0.1.0.</span></div>
-              <div class="check fail"><b>If not</b><span>Check <code>.claude-plugin/marketplace.json</code> is picked up: <code>claude plugin marketplace list</code> should show <code>cc-hush</code>.</span></div>
+              <pre class="cmd">npm i -g .            # from the checkout; later: npm i -g cc-hush
+cc-hush install
+cc-hush status</pre>
+              <div class="check pass"><b>Pass</b><span>Model download shows progress, the service is registered (<code>schtasks /query /tn cc-hush</code>, <code>launchctl print gui/$UID/com.cc-hush.daemon</code> or <code>systemctl --user status cc-hush</code>), <code>status</code> shows <code>"model":"ready"</code>, and install reports what it did to <code>ANTHROPIC_BASE_URL</code>.</span></div>
+              <div class="check fail"><b>If not</b><span>Read <code>~/.cc-hush/daemon.log</code>. On Windows an S4U task that never starts means the account lacks "Log on as a batch job"; run <code>cc-hush start --log</code> by hand and file an issue. Another value in <code>ANTHROPIC_BASE_URL</code> is left alone on purpose: move it to <code>upstream</code> in <code>~/.cc-hush/config.json</code>.</span></div>
             </div>
           </details>
 
           <details class="step" id="s1-2">
-            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Install dependencies inside the plugin cache</div><div class="sub">Claude Code copies the repo without node_modules</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Install the plugin from the local checkout</div><div class="sub">Marketplace add from the repo path, then install</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
             <div class="body">
-              <pre class="cmd">cd ~/.claude/plugins/cache/cc-hush/hush/*/ &amp;&amp; npm install --omit=dev
-ls node_modules/@huggingface/transformers/package.json</pre>
-              <div class="check pass"><b>Pass</b><span>The package.json is there. onnxruntime-node downloaded its native binary for your platform.</span></div>
-              <div class="check fail"><b>If not</b><span>The cache path differs per version; find it with <code>ls ~/.claude/plugins/cache/cc-hush/hush/</code>. Until this step is done, SessionStart reports "dependencies missing" and the proxy is not running.</span></div>
+              <pre class="cmd">claude plugin marketplace add /home/ewout/IdeaProjects/personal/cc-hush
+claude plugin install hush@cc-hush
+claude plugin list</pre>
+              <div class="check pass"><b>Pass</b><span><code>hush</code> appears in the plugin list with version 0.2.0. The plugin cache holds only <code>hooks/</code> and <code>skills/</code>, no <code>node_modules</code> needed.</span></div>
+              <div class="check fail"><b>If not</b><span>Check <code>.claude-plugin/marketplace.json</code> is picked up: <code>claude plugin marketplace list</code> should show <code>cc-hush</code>, and its <code>source</code> is <code>./plugin</code>.</span></div>
             </div>
           </details>
 
@@ -225,9 +226,9 @@ ls node_modules/@huggingface/transformers/package.json</pre>
             <summary><input type="checkbox" aria-label="Done"><div><div class="title">Point Claude Code at the proxy and restart</div><div class="sub">One env line in settings.json</div></div><div class="tags"></div></summary>
             <div class="body">
               <pre class="cmd">{ "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:47831" } }</pre>
-              <p class="note">Add that to <code>~/.claude/settings.json</code>, restart Claude Code, wait for the first SessionStart. First start downloads the 917 MB model into <code>~/.claude/plugins/data/hush/models</code>; on this Linux machine it is already there.</p>
-              <div class="check pass"><b>Pass</b><span>The session context contains "cc-hush daemon v0.1.0 running (model ready)" and no WARNING about ANTHROPIC_BASE_URL. <code>curl 127.0.0.1:47831/health</code> shows <code>"model":"ready"</code>.</span></div>
-              <div class="check fail"><b>If not</b><span>Read <code>~/.claude/plugins/data/hush/daemon.log</code>. A port-in-use line means an older daemon is alive; stop it with <code>POST /shutdown</code> and the token header.</span></div>
+              <p class="note">Add that to <code>~/.claude/settings.json</code>, restart Claude Code, wait for the first SessionStart. <code>cc-hush install</code> already put the model in <code>~/.cc-hush/models</code>; on this Linux machine it is already there.</p>
+              <div class="check pass"><b>Pass</b><span>The session context contains "cc-hush daemon v0.2.0 running (model ready)" and no WARNING about ANTHROPIC_BASE_URL. <code>curl 127.0.0.1:47831/health</code> shows <code>"model":"ready"</code>.</span></div>
+              <div class="check fail"><b>If not</b><span>Read <code>~/.cc-hush/daemon.log</code>. A port-in-use line means an older daemon is alive; stop it with <code>POST /shutdown</code> and the token header.</span></div>
             </div>
           </details>
 
@@ -237,7 +238,7 @@ ls node_modules/@huggingface/transformers/package.json</pre>
               <p class="note">In a scratch repo, ask Claude to run <code>git push --force origin main</code>. Do not worry, it should never execute.</p>
               <div class="check pass"><b>Pass</b><span>Claude reports a denial with the reason <code>cc-hush: Force push to main/master</code>. The audit table has a <code>PreToolUse / deny</code> row.</span></div>
               <div class="check fail"><b>If not</b><span>On Windows this is issue #34573: plugin command hooks on tool events dropped. Copy the <code>UserPromptSubmit</code> and <code>PreToolUse</code> entries from <code>hooks/hooks.json</code> into <code>~/.claude/settings.json</code> under <code>hooks</code>, with the absolute plugin path instead of <code>${CLAUDE_PLUGIN_ROOT}</code>. Record the outcome in DESIGN.md.</span></div>
-              <pre class="cmd">node -e "const {DatabaseSync}=require('node:sqlite');console.log(new DatabaseSync(process.env.HOME+'/.claude/plugins/data/hush/audit.sqlite').prepare('select ts,event,tool_name,decision from audit order by ts desc limit 10').all())"</pre>
+              <pre class="cmd">node -e "const {DatabaseSync}=require('node:sqlite');console.log(new DatabaseSync(process.env.HOME+'/.cc-hush/audit.sqlite').prepare('select ts,event,tool_name,decision from audit order by ts desc limit 10').all())"</pre>
             </div>
           </details>
 
@@ -255,7 +256,7 @@ ls node_modules/@huggingface/transformers/package.json</pre>
             <div class="body">
               <p class="note">Ask Claude to fetch a Jira issue through Rovo and write the reporter's name into <code>notes.md</code>, then ask it to <code>cat notes.md</code>.</p>
               <div class="check pass"><b>Pass</b><span>Claude's messages show <code>&lt;PII:person:n&gt;</code>, never the real name. The file on disk has the real name. After the cat, Claude still sees the token. The vault lists the name:</span></div>
-              <pre class="cmd">curl -s -H "x-hush-token: $(cat ~/.claude/plugins/data/hush/token)" 127.0.0.1:47831/debug/vault</pre>
+              <pre class="cmd">curl -s -H "x-hush-token: $(cat ~/.cc-hush/token)" 127.0.0.1:47831/debug/vault</pre>
               <div class="check fail"><b>If not</b><span>Real name in Claude's output: the MCP result was not treated as a data source; check the tool name starts with <code>mcp__</code>. Token in the file: Write is not rehydrating; check <code>updatedInput</code> in the hook response and whether the project has a <code>.hush/config.json</code> that removes Write from <code>allowPii.tools</code>.</span></div>
             </div>
           </details>
@@ -263,7 +264,7 @@ ls node_modules/@huggingface/transformers/package.json</pre>
           <details class="step" id="s1-7">
             <summary><input type="checkbox" aria-label="Done"><div><div class="title">Kill the daemon mid-session</div><div class="sub">Gate 8. Fail closed, both directions</div></div><div class="tags"><span class="tag gate">gate 8</span></div></summary>
             <div class="body">
-              <pre class="cmd">curl -s -X POST -H "x-hush-token: $(cat ~/.claude/plugins/data/hush/token)" 127.0.0.1:47831/shutdown</pre>
+              <pre class="cmd">curl -s -X POST -H "x-hush-token: $(cat ~/.cc-hush/token)" 127.0.0.1:47831/shutdown</pre>
               <p class="note">Then send Claude a message, and separately ask it to run any Bash command.</p>
               <div class="check pass"><b>Pass</b><span>The API call fails with an unreachable-server error. The tool call is blocked with "privacy daemon unavailable". Nothing was sent unredacted. A new session, or running <code>node hooks/ensure-daemon.ts</code>, brings the daemon back.</span></div>
               <div class="check fail"><b>If not</b><span>If the tool call ran, the hook did not fire (see gate 1). If the API call succeeded, <code>ANTHROPIC_BASE_URL</code> is not in effect for that session.</span></div>
@@ -287,7 +288,7 @@ ls node_modules/@huggingface/transformers/package.json</pre>
           <details class="step" id="s2-1">
             <summary><input type="checkbox" aria-label="Done"><div><div class="title">Read the proxy latencies from the audit log</div><div class="sub">First request vs later requests</div></div><div class="tags"><span class="tag gate">gate 2</span></div></summary>
             <div class="body">
-              <pre class="cmd">node -e "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.env.HOME+'/.claude/plugins/data/hush/audit.sqlite');console.table(db.prepare(\"select session_id, min(latency_ms) fastest, max(latency_ms) slowest, count(distinct ts) requests from audit where event='proxy' group by session_id\").all())"</pre>
+              <pre class="cmd">node -e "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.env.HOME+'/.cc-hush/audit.sqlite');console.table(db.prepare(\"select session_id, min(latency_ms) fastest, max(latency_ms) slowest, count(distinct ts) requests from audit where event='proxy' group by session_id\").all())"</pre>
               <div class="check pass"><b>Pass</b><span>Later requests mostly hit the memo and sit under about 2 s. The first request is the outlier; note its number.</span></div>
               <div class="check decide"><b>Decide</b><span>If the first request is too slow for daily use, switch <code>system</code> to <code>scanWithRegexAndVault</code> in <code>RequestRedaction.redactBody</code>. One line, and the system prompt is Claude Code's own text plus your CLAUDE.md, which you already see.</span></div>
             </div>
@@ -424,13 +425,6 @@ EOF</pre>
         </div>
         <div class="steps">
 
-          <details class="step" id="s5-1">
-            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Decide whether SessionStart installs dependencies itself</div><div class="sub">Convenience versus running npm in a hook</div></div><div class="tags"><span class="tag decide">decide</span></div></summary>
-            <div class="body">
-              <div class="callout">Today a fresh install reports "dependencies missing" and does nothing until the user runs hush-setup. Auto-running <code>npm install</code> in the SessionStart hook fixes that but adds network access and a minute of wait to a hook with a 30 s timeout.</div>
-              <div class="check decide"><b>Decide</b><span>Option A: keep manual, but make the SessionStart message impossible to miss. Option B: spawn <code>npm install</code> detached, same as the daemon, and report "installing" until it finishes. B is about ten lines.</span></div>
-            </div>
-          </details>
 
           <details class="step" id="s5-2">
             <summary><input type="checkbox" aria-label="Done"><div><div class="title">Add CHANGELOG.md and SECURITY.md</div><div class="sub">State what is and is not protected</div></div><div class="tags"></div></summary>

@@ -48,9 +48,12 @@ flowchart LR
 | `daemon/detect.ts` | `regexDetect`, `modelDetect`, `mergeSpans`, `detect`, `mcpKeyPass` |
 | `daemon/vault.ts` | `tokenize`, `applySpans`, `redactKnown`, `rehydrate`, `isWhitelisted`, `Policy` |
 | `daemon/guard.ts` | `extract`, `destructive`, `piiColumns`, `loadSchema`, `findProject`, `guard` |
-| `hooks/ensure-daemon.ts` | SessionStart: start or restart the daemon, warn when the proxy is not in use |
-| `hooks/hook.ts` | UserPromptSubmit and PreToolUse: forward to `/hook`, exit 2 when the daemon is unreachable |
-| `skills/*/SKILL.md` | Knowledge for Claude: setup, token usage, schema building, PII-free SQL, log review |
+| `daemon/service.ts` | startup service per OS (`installService`, `startService`, `uninstallService`), `mergeBaseUrl` for settings.json |
+| `daemon/paths.ts` | `~/.cc-hush` data dir, port, token and log paths |
+| `bin/cc-hush.ts` | CLI: `install`, `uninstall`, `start [--log]`, `stop`, `status` |
+| `plugin/hooks/ensure-daemon.ts` | SessionStart: check the daemon, spawn `cc-hush start` if the service did not, warn when the proxy is not in use |
+| `plugin/hooks/hook.ts` | UserPromptSubmit and PreToolUse: forward to `/hook`, exit 2 when the daemon is unreachable |
+| `plugin/skills/*/SKILL.md` | Knowledge for Claude: setup, token usage, schema building, PII-free SQL, log review |
 
 ## The fail-closed guarantee
 

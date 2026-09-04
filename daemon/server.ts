@@ -1,18 +1,16 @@
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { detect, loadModel, modelReady, mcpKeyPassText } from './detect.ts';
 import { applySpans, redactKnown, rehydrateDeep, isWhitelisted, dump, size, DEFAULT_POLICY, type Policy, type Span } from './vault.ts';
 import { guard, findProject, loadSchema, DATA_SOURCE_RE } from './guard.ts';
+import { DATA, PORT, TOKEN_FILE } from './paths.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const VERSION: string = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
-const PORT = 47831;
-const DATA = process.env.CLAUDE_PLUGIN_DATA ?? path.join(os.homedir(), '.claude', 'plugins', 'data', 'hush');
 const TOOL_RESULT_SIZE_CAP_BYTES = 32 * 1024;
 const REDACTION_CACHE_MAX_ENTRIES = 50_000;
 const SHUTDOWN_GRACE_MS = 50;
@@ -25,7 +23,6 @@ const upstream = new URL(process.env.HUSH_UPSTREAM ?? machineConfig.upstream ?? 
 const defaultDevice = process.platform === 'win32' ? 'dml' : 'cpu';
 const device: string = process.env.HUSH_DEVICE ?? machineConfig.device ?? defaultDevice;
 
-const TOKEN_FILE = path.join(DATA, 'token');
 if (!fs.existsSync(TOKEN_FILE)) fs.writeFileSync(TOKEN_FILE, crypto.randomBytes(24).toString('hex'), { mode: 0o600 });
 const TOKEN = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
 const TOKEN_PROTECTED_PATHS = new Set(['/hook', '/debug/vault', '/shutdown']);

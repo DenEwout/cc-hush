@@ -34,7 +34,7 @@ Constants in code: dtype `q4`, threshold `0.5`, size cap `32KB`, data-source pat
 
 ## Configuration
 
-**Machine** (`${CLAUDE_PLUGIN_DATA}/config.json`, per developer): `{ "upstream": "http://127.0.0.1:8787/w/claude" }`.
+**Machine** (`~/.cc-hush/config.json`, per developer): `{ "upstream": "http://127.0.0.1:8787/w/claude" }`.
 
 **Project** (`.hush/` in the repo, committed and shared):
 
@@ -72,7 +72,7 @@ Detected values are replaced with stable tokens: `<PII:email:3>`, `<PII:person:1
 
 Rehydration (token -> real value) happens in PreToolUse for tools listed in `allowPii.tools` and for MCP tools whose server is listed in `allowPii.mcpServers`. Everything else keeps the tokens in its input, so nothing leaks, at the cost of a literal `<PII:person:1>` landing in the target if Claude tries. Outputs of whitelisted MCP servers are still tokenized on the way in; the whitelist only governs what goes out.
 
-`GET /debug/vault` dumps the map. Loopback only, and like `/hook` and `/shutdown` it requires the header `x-hush-token` with the contents of `${CLAUDE_PLUGIN_DATA}/token` (generated on first start, mode 0600), so other local users or stray processes cannot read or rehydrate the vault. The `/v1/*` proxy needs no token: it only ever removes data. `curl -H "x-hush-token: $(cat ~/.claude/plugins/data/hush/token)" 127.0.0.1:47831/debug/vault`.
+`GET /debug/vault` dumps the map. Loopback only, and like `/hook` and `/shutdown` it requires the header `x-hush-token` with the contents of `~/.cc-hush/token` (generated on first start, mode 0600), so other local users or stray processes cannot read or rehydrate the vault. The `/v1/*` proxy needs no token: it only ever removes data. `curl -H "x-hush-token: $(cat ~/.cc-hush/token)" 127.0.0.1:47831/debug/vault`.
 
 The vault is shared by every session of the same OS user, by design (stable tokens across sessions). Tokens are guessable (`<PII:secret:1>`), so any Claude session on the machine can have a token rehydrated into its own Write. That is the same user's data landing in the same user's files; accepted.
 
@@ -136,7 +136,7 @@ Labels are the 8 privacy-filter labels plus `pii` as a generic fallback. Returns
 
 | Event | Matcher | Type | Action |
 |---|---|---|---|
-| SessionStart | | command | `node hooks/ensure-daemon.ts`: GET `/health`, spawn daemon detached if absent (`EADDRINUSE` means another session won), restart on version mismatch, emit `additionalContext` (two lines pointing at the `hush-guide` skill) |
+| SessionStart | | command | `node hooks/ensure-daemon.ts`: GET `/health`; if down, spawn `cc-hush start --log` from PATH detached as a fallback for a missing startup service (`EADDRINUSE` means another instance won), emit `additionalContext` (two lines pointing at the `hush-guide` skill) |
 | UserPromptSubmit | | command | `node hooks/hook.ts`: POST to `/hook`. Secret scan. Block or allow. Exit 2 if the daemon is unreachable. Audit. |
 | PreToolUse | `Bash\|Write\|Edit\|MultiEdit\|mcp__.*` | command | `node hooks/hook.ts`, exit 2 if the daemon is unreachable. Dispatch on `tool_name`: shell and SQL guard for Bash and MCP, then rehydrate tokens in the input when the tool or server is whitelisted. Return `updatedInput`. Audit. |
 
@@ -146,7 +146,7 @@ No PostToolUse hook. Issue #34573 reported plugin `hooks.json` command hooks on 
 
 | Skill | Purpose |
 |---|---|
-| `hush-setup` | Download the model to `${CLAUDE_PLUGIN_DATA}/models`, write machine `config.json`, start daemon, wait for `/health`, print the `ANTHROPIC_BASE_URL` line to put in settings. |
+| `hush-setup` | `npm i -g cc-hush && cc-hush install` (model download, startup service, daemon start, `ANTHROPIC_BASE_URL` in settings), chaining an existing proxy through `upstream`, repair and uninstall. |
 | `hush-guide` | Knowledge skill. Tells Claude what `<PII:label:n>` tokens are, to use them verbatim in whitelisted tools (they rehydrate), never to guess real values, never to put tokens into non-whitelisted MCP or WebFetch inputs (ask the user to do that step), what the size-cap message means and how to narrow, what the guard reasons mean, how to check `/health` and `/debug/vault`. Triggers on tokens, on the size-cap message, on guard denials. SessionStart injects two lines pointing here. |
 | `hush-schema` | Builds or refreshes `.hush/schema.json`. (1) Find schema sources in the repo: entities, migrations, DDL, ORM schemas. (2) If a DB client or MCP DB tool is available, introspect live: `information_schema.columns` plus `col_description()` (PostgreSQL), `COLUMN_COMMENT` (MySQL), `ALL_COL_COMMENTS` (Oracle). Names, types and comments only, never a row. (3) Classify: a column comment containing `pii` wins, `pii:<label>` gives the label, bare `pii` gives the generic label; otherwise a name heuristic in English and Dutch (email, mail, phone, tel, gsm, name, naam, voornaam, achternaam, address, adres, straat, postcode, gemeente, birth, geboortedatum, iban, rekening, rijksregister, rrn, bsn, ssn, btw, vat, password, token, secret). (4) Merge into the existing file, existing entries win. (5) Print the table for review. |
 | `hush-query` | How to write ad-hoc SQL that stays PII-free. Consults `.hush/schema.json` first. Select explicit non-PII columns, filter and join on surrogate keys, use aggregates, `LIMIT`, never `SELECT *` on a classified table, hand unavoidable PII queries to the user. Triggers when Claude is about to run SQL through Bash or an MCP DB tool. |
@@ -154,29 +154,33 @@ No PostToolUse hook. Issue #34573 reported plugin `hooks.json` command hooks on 
 
 ## Storage
 
-`${CLAUDE_PLUGIN_DATA}/`: `models/`, `config.json`, `audit.sqlite` (table `audit(ts, session_id, event, tool_name, label, count, decision, latency_ms)`, labels and counts only, never values, no retention), `daemon.log`.
+`~/.cc-hush/`: `models/`, `config.json`, `token`, `audit.sqlite` (table `audit(ts, session_id, event, tool_name, label, count, decision, latency_ms)`, labels and counts only, never values, no retention), `daemon.log`.
 
 Project `.hush/`: `config.json`, `schema.json`.
 
-## Plugin layout
+## Layout
+
+One repo, two deliverables. The npm package `cc-hush` (`files` in `package.json`) is the daemon and its CLI; the Claude Code plugin `hush` lives under `plugin/` and is what `.claude-plugin/marketplace.json` points at. The plugin has no dependencies and never runs the daemon's code; it talks to `127.0.0.1:47831`.
 
 ```
 cc-hush/
-  .claude-plugin/plugin.json
-  hooks/hooks.json
-  hooks/ensure-daemon.ts
-  hooks/hook.ts          command hook wrapper, POST /hook, exit 2 when the daemon is down
-  skills/hush-setup/SKILL.md
-  skills/hush-guide/SKILL.md
-  skills/hush-schema/SKILL.md
-  skills/hush-query/SKILL.md
-  skills/hush-logs/SKILL.md
-  daemon/server.ts   node:http, /health, /hook, /debug/vault, /v1/* proxy, policy load, audit insert
-  daemon/detect.ts   regex + model, span merge, allowlist, MCP key pass
-  daemon/vault.ts    tokenization, rehydration, whitelist check
-  daemon/guard.ts    SQL extraction, destructive tiers, PII column match
-  package.json
+  package.json             npm package: bin + daemon
+  bin/cc-hush.ts           CLI: install | uninstall | start [--log] | stop | status
+  daemon/server.ts         node:http, /health, /hook, /debug/vault, /shutdown, /v1/* proxy, policy load, audit insert
+  daemon/detect.ts         regex + model, span merge, allowlist, MCP key pass
+  daemon/vault.ts          tokenization, rehydration, whitelist check
+  daemon/guard.ts          SQL extraction, destructive tiers, PII column match
+  daemon/service.ts        startup service per OS (schtasks S4U task, launchd agent, systemd user unit), settings.json merge
+  daemon/paths.ts          ~/.cc-hush, port, token and log file
+  .claude-plugin/marketplace.json   source: ./plugin
+  plugin/.claude-plugin/plugin.json
+  plugin/hooks/hooks.json
+  plugin/hooks/ensure-daemon.ts     SessionStart: health, fallback spawn of cc-hush start, BASE_URL warning
+  plugin/hooks/hook.ts              command hook wrapper, POST /hook, exit 2 when the daemon is down
+  plugin/skills/*/SKILL.md
 ```
+
+`cc-hush install` is the only install path. No npm postinstall: it would run as root under `sudo npm i -g` and silently skip under `--ignore-scripts`. The service pins `process.execPath` and the absolute path of `bin/cc-hush.ts`; a Node switch means re-running install. Exit code 0 on `EADDRINUSE` is what stops launchd (`KeepAlive.SuccessfulExit=false`), systemd (`Restart=on-failure`) and Task Scheduler (`RestartOnFailure`) from relaunching against a daemon that a hook already started.
 
 ## Acceptance gates
 

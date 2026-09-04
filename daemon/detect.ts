@@ -71,12 +71,12 @@ let loading: Promise<void> | undefined;
 
 export const modelReady = () => !!model;
 
-export function loadModel(cacheDir: string, device: string): Promise<void> {
+export function loadModel(cacheDir: string, device: string, progress_callback?: (event: unknown) => void): Promise<void> {
   env.cacheDir = cacheDir;
   loading ??= (async () => {
     const started = Date.now();
-    tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID);
-    model = await AutoModelForTokenClassification.from_pretrained(MODEL_ID, { dtype: 'q4', device: device as any });
+    tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID, { progress_callback });
+    model = await AutoModelForTokenClassification.from_pretrained(MODEL_ID, { dtype: 'q4', device: device as any, progress_callback });
     console.log(`[hush] model ready on ${device} in ${Date.now() - started}ms`);
   })();
   return loading;

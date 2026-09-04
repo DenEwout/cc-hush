@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TD
-    subgraph machine["Machine  ${CLAUDE_PLUGIN_DATA}/  (default ~/.claude/plugins/data/hush)"]
+    subgraph machine["Machine  ~/.cc-hush/  (HUSH_DATA overrides)"]
         MC["config.json<br/>{ upstream, device }"]
         TK["token<br/>random, mode 0600"]
         MO["models/<br/>openai/privacy-filter q4"]
@@ -73,7 +73,7 @@ Built by the `hush-schema` skill from migrations, ORM models or `information_sch
 | `POST /shutdown` | yes | Exit, used on version upgrade |
 | anything else | no | Proxied to `upstream` after redaction |
 
-The token header is `x-hush-token`, value from `${CLAUDE_PLUGIN_DATA}/token`. Endpoints that reveal or act need it; the proxy does not, since it only removes data.
+The token header is `x-hush-token`, value from `~/.cc-hush/token`. Endpoints that reveal or act need it; the proxy does not, since it only removes data.
 
 ## Audit log
 

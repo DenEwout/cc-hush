@@ -4,7 +4,7 @@ Claude Code runs three hooks from `hooks/hooks.json`. All are command hooks: an 
 
 | Event | Script | Matcher | Outcome |
 |---|---|---|---|
-| SessionStart | `ensure-daemon.ts` | | start or upgrade the daemon, inject two lines of context, warn if `ANTHROPIC_BASE_URL` does not point at the proxy |
+| SessionStart | `ensure-daemon.ts` | | check the daemon, start `cc-hush start` as a fallback when the startup service did not, inject two lines of context, warn if `ANTHROPIC_BASE_URL` does not point at the proxy |
 | UserPromptSubmit | `hook.ts` | | block when the prompt contains a secret |
 | PreToolUse | `hook.ts` | `Bash\|Write\|Edit\|MultiEdit\|mcp__.*` | rehydrate tokens for whitelisted tools, run the guard, return `updatedInput` and a permission decision |
 
@@ -12,17 +12,15 @@ Claude Code runs three hooks from `hooks/hooks.json`. All are command hooks: an 
 
 ```mermaid
 flowchart TD
-    S[SessionStart] --> D{node_modules present?}
-    D -- no --> N["context: dependencies missing, run hush-setup"]
-    D -- yes --> H{GET /health ok?}
-    H -- "yes, same version" --> R[running]
-    H -- "yes, other version" --> K[POST /shutdown with token] --> ST
-    H -- no --> ST[spawn daemon/server.ts detached] --> W[wait 1.5 s] --> R
+    S[SessionStart] --> H{GET /health ok?}
+    H -- yes --> R[running]
+    H -- no --> ST["spawn cc-hush start --log detached (PATH)"] --> W[wait 1.5 s] --> H2{GET /health ok?}
+    H2 -- yes --> R2["started by hook, advise cc-hush install"] --> B
+    H2 -- no --> N["not reachable: npm i -g cc-hush && cc-hush install"] --> B
     R --> B{ANTHROPIC_BASE_URL is<br/>http://127.0.0.1:47831?}
     B -- no --> WARN["append WARNING: traffic not going through the proxy"]
     B -- yes --> OUT
     WARN --> OUT[additionalContext for Claude]
-    N --> OUT
 ```
 
 ## Prompt submit

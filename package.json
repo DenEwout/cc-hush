@@ -1,15 +1,29 @@
 {
   "name": "cc-hush",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Privacy plugin for Claude Code: PII/secret redaction proxy, destructive command guard, PII column guard, audit log.",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=24" },
+  "bin": {
+    "cc-hush": "bin/cc-hush.ts"
+  },
+  "files": [
+    "bin",
+    "daemon"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
-    "start": "node daemon/server.ts",
+    "start": "node bin/cc-hush.ts start",
     "test": "node --test test/*.test.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0"
+  },
+  "allowScripts": {
+    "onnxruntime-node@1.24.3": true,
+    "protobufjs@7.6.6": true,
+    "sharp@0.34.5": true
   }
 }
