@@ -1,0 +1,535 @@
+<title>cc-hush Runbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper: #F5F7F4;
+    --paper-2: #EBEFEA;
+    --ink: #1A1F1D;
+    --ink-2: #4A544F;
+    --ink-3: #7B857F;
+    --line: #D3DAD5;
+    --accent: #2E7D6B;
+    --accent-soft: #D9ECE6;
+    --deny: #B0393F;
+    --deny-soft: #F3DCDD;
+    --ask: #9A6B12;
+    --ask-soft: #F4E7CB;
+    --code-bg: #E7ECE8;
+    --token-bg: #1A1F1D;
+    --token-fg: #F5F7F4;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #151A18;
+      --paper-2: #1C2320;
+      --ink: #E8ECE9;
+      --ink-2: #AEB8B2;
+      --ink-3: #7E8983;
+      --line: #2C3632;
+      --accent: #5CB59F;
+      --accent-soft: #1F3A33;
+      --deny: #E07079;
+      --deny-soft: #3B2224;
+      --ask: #D9A94A;
+      --ask-soft: #3A3020;
+      --code-bg: #10201B;
+      --token-bg: #E8ECE9;
+      --token-fg: #151A18;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #151A18;
+    --paper-2: #1C2320;
+    --ink: #E8ECE9;
+    --ink-2: #AEB8B2;
+    --ink-3: #7E8983;
+    --line: #2C3632;
+    --accent: #5CB59F;
+    --accent-soft: #1F3A33;
+    --deny: #E07079;
+    --deny-soft: #3B2224;
+    --ask: #D9A94A;
+    --ask-soft: #3A3020;
+    --code-bg: #10201B;
+    --token-bg: #E8ECE9;
+    --token-fg: #151A18;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { font-family: "Bricolage Grotesque", "IBM Plex Sans", system-ui, sans-serif; text-wrap: balance; margin: 0; }
+  code, kbd, .token, .cmd { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+  .page { max-width: 1120px; margin: 0 auto; padding: 40px 28px 80px; }
+
+  header { display: grid; grid-template-columns: 1fr auto; gap: 24px 40px; align-items: end; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
+  .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; }
+  h1 { font-size: 40px; font-weight: 700; line-height: 1.05; margin-top: 6px; letter-spacing: -.01em; }
+  .lede { color: var(--ink-2); max-width: 62ch; margin-top: 12px; }
+  .token { display: inline-block; background: var(--token-bg); color: var(--token-fg); padding: 0 .4em; border-radius: 3px; font-size: .9em; }
+  .strike { text-decoration: line-through; text-decoration-color: var(--deny); text-decoration-thickness: 2px; color: var(--ink-3); }
+
+  .overall { min-width: 240px; }
+  .overall .num { font-family: "Bricolage Grotesque", sans-serif; font-size: 44px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .overall .num small { font-size: 16px; color: var(--ink-3); font-weight: 500; margin-left: 4px; }
+  .bar { height: 6px; background: var(--paper-2); border-radius: 3px; overflow: hidden; margin-top: 10px; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
+  .overall .meta { display: flex; justify-content: space-between; color: var(--ink-3); font-size: 12px; margin-top: 8px; }
+  .overall button { background: none; border: 0; color: var(--ink-3); font: inherit; font-size: 12px; cursor: pointer; padding: 0; text-decoration: underline; }
+  .overall button:hover { color: var(--deny); }
+
+  .layout { display: grid; grid-template-columns: 220px 1fr; gap: 48px; margin-top: 36px; }
+  nav { position: sticky; top: 24px; align-self: start; }
+  nav ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  nav a { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: baseline; padding: 8px 10px; border-radius: 6px; color: var(--ink-2); text-decoration: none; font-size: 14px; }
+  nav a:hover { background: var(--paper-2); color: var(--ink); }
+  nav .n { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-3); }
+  nav .c { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  nav a.done .c { color: var(--accent); }
+  nav .legend { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line); display: grid; gap: 8px; font-size: 12px; color: var(--ink-3); }
+  nav .legend span { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.gate { background: var(--accent); }
+  .dot.decide { background: var(--ask); }
+  .dot.risk { background: var(--deny); }
+
+  .phase { padding: 8px 0 40px; }
+  .phase + .phase { border-top: 1px solid var(--line); padding-top: 36px; }
+  .phase-head { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: start; margin-bottom: 18px; }
+  .phase-head .eyebrow { margin-bottom: 4px; }
+  h2 { font-size: 26px; font-weight: 700; letter-spacing: -.01em; }
+  .why { color: var(--ink-2); max-width: 66ch; margin-top: 8px; }
+  .phase-progress { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: 13px; white-space: nowrap; }
+  .phase-progress .bar { width: 120px; margin-left: auto; }
+
+  .steps { display: grid; gap: 8px; }
+  details.step { border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+  details.step[open] { background: var(--paper-2); }
+  details.step.done { border-color: transparent; background: var(--accent-soft); }
+  details.step.done[open] { background: var(--accent-soft); }
+  summary { list-style: none; display: grid; grid-template-columns: 22px 1fr auto; gap: 14px; align-items: start; padding: 12px 14px; cursor: pointer; }
+  summary::-webkit-details-marker { display: none; }
+  summary input { width: 18px; height: 18px; margin: 3px 0 0; accent-color: var(--accent); cursor: pointer; }
+  summary .title { font-weight: 600; }
+  .done summary .title { color: var(--ink-2); text-decoration: line-through; text-decoration-color: var(--accent); }
+  summary .sub { color: var(--ink-3); font-size: 13px; margin-top: 2px; }
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .tag { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; font-weight: 600; padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
+  .tag.gate { background: var(--accent-soft); color: var(--accent); }
+  .tag.decide { background: var(--ask-soft); color: var(--ask); }
+  .tag.risk { background: var(--deny-soft); color: var(--deny); }
+  .done .tag.gate { background: var(--paper); }
+
+  .body { padding: 0 14px 16px 50px; display: grid; gap: 12px; }
+  .body p { margin: 0; }
+  .body p.note { color: var(--ink-2); max-width: 66ch; }
+  .cmd { position: relative; background: var(--code-bg); border-radius: 6px; padding: 10px 44px 10px 14px; font-size: 13px; line-height: 1.5; overflow-x: auto; white-space: pre; margin: 0; }
+  .cmd button { position: absolute; top: 6px; right: 6px; border: 1px solid var(--line); background: var(--paper); color: var(--ink-2); font: inherit; font-size: 11px; padding: 2px 8px; border-radius: 4px; cursor: pointer; }
+  .cmd button:hover { color: var(--ink); border-color: var(--ink-3); }
+  .check { display: grid; grid-template-columns: 80px 1fr; gap: 10px; font-size: 14px; }
+  .check b { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; color: var(--ink-3); padding-top: 3px; }
+  .check.pass b { color: var(--accent); }
+  .check.fail b { color: var(--deny); }
+  .check.decide b { color: var(--ask); }
+  .check code { background: var(--code-bg); padding: 0 .35em; border-radius: 3px; font-size: .92em; }
+
+  .callout { border-left: 3px solid var(--ask); padding: 10px 14px; background: var(--ask-soft); border-radius: 0 6px 6px 0; color: var(--ink); font-size: 14px; }
+
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 13px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+  @media (max-width: 820px) {
+    .layout { grid-template-columns: 1fr; gap: 24px; }
+    nav { position: static; }
+    header { grid-template-columns: 1fr; }
+    h1 { font-size: 32px; }
+    .body { padding-left: 14px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .bar > i { transition: none; } }
+  @media print { nav, .cmd button, .overall button { display: none; } details.step { break-inside: avoid; } details.step:not([open]) .body { display: grid; } }
+</style>
+
+<div class="page">
+  <header>
+    <div>
+      <div class="eyebrow">cc-hush · from curl-verified to session-proven</div>
+      <h1>Next steps before building more</h1>
+      <p class="lede">Everything so far was verified against the daemon with curl. Nothing has run inside a real Claude Code session yet. Work top to bottom: phase 1 and 2 can change the design, the rest lock it in. Steps marked <span class="tag gate">gate</span> map to the acceptance gates in DESIGN.md. Progress is saved in this browser.</p>
+      <p class="lede" style="margin-top:8px">What this proves in the end: <span class="strike">Sarah Connor</span> leaves the machine as <span class="token">&lt;PII:person:1&gt;</span>, and comes back as Sarah Connor only where you allow it.</p>
+    </div>
+    <div class="overall">
+      <div class="num"><span id="doneCount">0</span><small>/ <span id="totalCount">0</span> steps</small></div>
+      <div class="bar"><i id="overallBar"></i></div>
+      <div class="meta"><span id="phaseSummary">0 of 5 phases complete</span><button id="reset" type="button">Reset progress</button></div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav aria-label="Phases">
+      <ol id="phaseNav"></ol>
+      <div class="legend">
+        <span><i class="dot gate"></i> gate: acceptance gate from DESIGN.md</span>
+        <span><i class="dot decide"></i> decide: outcome changes the design</span>
+        <span><i class="dot risk"></i> risk: most likely to fail</span>
+      </div>
+    </nav>
+
+    <main id="phases">
+
+      <section class="phase" id="p1" data-phase="Dogfood">
+        <div class="phase-head">
+          <div>
+            <div class="eyebrow">Phase 1 · gates 1, 3, 8</div>
+            <h2>Run it inside a real Claude Code session</h2>
+            <p class="why">Three things curl cannot show: whether plugin command hooks fire on tool events on your machine, whether streaming responses survive the proxy, and whether <code>updatedInput</code> really lands the real name in the file.</p>
+          </div>
+          <div class="phase-progress"><span class="count">0 / 0</span><div class="bar"><i></i></div></div>
+        </div>
+        <div class="steps">
+
+          <details class="step" id="s1-1">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Install the plugin from the local checkout</div><div class="sub">Marketplace add from the repo path, then install</div></div><div class="tags"></div></summary>
+            <div class="body">
+              <pre class="cmd">claude plugin marketplace add /home/ewout/IdeaProjects/personal/cc-hush
+claude plugin install hush@cc-hush
+claude plugin list</pre>
+              <div class="check pass"><b>Pass</b><span><code>hush</code> appears in the plugin list with version 0.1.0.</span></div>
+              <div class="check fail"><b>If not</b><span>Check <code>.claude-plugin/marketplace.json</code> is picked up: <code>claude plugin marketplace list</code> should show <code>cc-hush</code>.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s1-2">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Install dependencies inside the plugin cache</div><div class="sub">Claude Code copies the repo without node_modules</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
+            <div class="body">
+              <pre class="cmd">cd ~/.claude/plugins/cache/cc-hush/hush/*/ &amp;&amp; npm install --omit=dev
+ls node_modules/@huggingface/transformers/package.json</pre>
+              <div class="check pass"><b>Pass</b><span>The package.json is there. onnxruntime-node downloaded its native binary for your platform.</span></div>
+              <div class="check fail"><b>If not</b><span>The cache path differs per version; find it with <code>ls ~/.claude/plugins/cache/cc-hush/hush/</code>. Until this step is done, SessionStart reports "dependencies missing" and the proxy is not running.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s1-3">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Point Claude Code at the proxy and restart</div><div class="sub">One env line in settings.json</div></div><div class="tags"></div></summary>
+            <div class="body">
+              <pre class="cmd">{ "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:47831" } }</pre>
+              <p class="note">Add that to <code>~/.claude/settings.json</code>, restart Claude Code, wait for the first SessionStart. First start downloads the 917 MB model into <code>~/.claude/plugins/data/hush/models</code>; on this Linux machine it is already there.</p>
+              <div class="check pass"><b>Pass</b><span>The session context contains "cc-hush daemon v0.1.0 running (model ready)" and no WARNING about ANTHROPIC_BASE_URL. <code>curl 127.0.0.1:47831/health</code> shows <code>"model":"ready"</code>.</span></div>
+              <div class="check fail"><b>If not</b><span>Read <code>~/.claude/plugins/data/hush/daemon.log</code>. A port-in-use line means an older daemon is alive; stop it with <code>POST /shutdown</code> and the token header.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s1-4">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Confirm the PreToolUse hook fires</div><div class="sub">Gate 1. The whole guard depends on this</div></div><div class="tags"><span class="tag gate">gate 1</span><span class="tag risk">risk</span></div></summary>
+            <div class="body">
+              <p class="note">In a scratch repo, ask Claude to run <code>git push --force origin main</code>. Do not worry, it should never execute.</p>
+              <div class="check pass"><b>Pass</b><span>Claude reports a denial with the reason <code>cc-hush: Force push to main/master</code>. The audit table has a <code>PreToolUse / deny</code> row.</span></div>
+              <div class="check fail"><b>If not</b><span>On Windows this is issue #34573: plugin command hooks on tool events dropped. Copy the <code>UserPromptSubmit</code> and <code>PreToolUse</code> entries from <code>hooks/hooks.json</code> into <code>~/.claude/settings.json</code> under <code>hooks</code>, with the absolute plugin path instead of <code>${CLAUDE_PLUGIN_ROOT}</code>. Record the outcome in DESIGN.md.</span></div>
+              <pre class="cmd">node -e "const {DatabaseSync}=require('node:sqlite');console.log(new DatabaseSync(process.env.HOME+'/.claude/plugins/data/hush/audit.sqlite').prepare('select ts,event,tool_name,decision from audit order by ts desc limit 10').all())"</pre>
+            </div>
+          </details>
+
+          <details class="step" id="s1-5">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Have a normal conversation through the proxy</div><div class="sub">Streaming, tool use, multiple turns</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
+            <div class="body">
+              <p class="note">Ask Claude to read a file, edit it, run a test. Watch for stalls or truncated output. Responses are piped through untouched, but headers and chunking are the place a proxy usually breaks.</p>
+              <div class="check pass"><b>Pass</b><span>Text streams as usual. <code>daemon.log</code> has no <code>[hush]</code> error lines. Audit shows <code>proxy / redacted</code> rows with a latency you can live with.</span></div>
+              <div class="check fail"><b>If not</b><span>Compare the request Claude Code sent with what reached upstream: run the echo upstream from the session scratchpad with <code>HUSH_UPSTREAM</code>, or add a one-off log line in <code>forwardUpstream</code>.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s1-6">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Round trip a real name through Rovo, a file, and back</div><div class="sub">Gate 3. The vault loop end to end</div></div><div class="tags"><span class="tag gate">gate 3</span></div></summary>
+            <div class="body">
+              <p class="note">Ask Claude to fetch a Jira issue through Rovo and write the reporter's name into <code>notes.md</code>, then ask it to <code>cat notes.md</code>.</p>
+              <div class="check pass"><b>Pass</b><span>Claude's messages show <code>&lt;PII:person:n&gt;</code>, never the real name. The file on disk has the real name. After the cat, Claude still sees the token. The vault lists the name:</span></div>
+              <pre class="cmd">curl -s -H "x-hush-token: $(cat ~/.claude/plugins/data/hush/token)" 127.0.0.1:47831/debug/vault</pre>
+              <div class="check fail"><b>If not</b><span>Real name in Claude's output: the MCP result was not treated as a data source; check the tool name starts with <code>mcp__</code>. Token in the file: Write is not rehydrating; check <code>updatedInput</code> in the hook response and whether the project has a <code>.hush/config.json</code> that removes Write from <code>allowPii.tools</code>.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s1-7">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Kill the daemon mid-session</div><div class="sub">Gate 8. Fail closed, both directions</div></div><div class="tags"><span class="tag gate">gate 8</span></div></summary>
+            <div class="body">
+              <pre class="cmd">curl -s -X POST -H "x-hush-token: $(cat ~/.claude/plugins/data/hush/token)" 127.0.0.1:47831/shutdown</pre>
+              <p class="note">Then send Claude a message, and separately ask it to run any Bash command.</p>
+              <div class="check pass"><b>Pass</b><span>The API call fails with an unreachable-server error. The tool call is blocked with "privacy daemon unavailable". Nothing was sent unredacted. A new session, or running <code>node hooks/ensure-daemon.ts</code>, brings the daemon back.</span></div>
+              <div class="check fail"><b>If not</b><span>If the tool call ran, the hook did not fire (see gate 1). If the API call succeeded, <code>ANTHROPIC_BASE_URL</code> is not in effect for that session.</span></div>
+            </div>
+          </details>
+
+        </div>
+      </section>
+
+      <section class="phase" id="p2" data-phase="Latency">
+        <div class="phase-head">
+          <div>
+            <div class="eyebrow">Phase 2 · gate 2</div>
+            <h2>Measure latency and Dutch recall</h2>
+            <p class="why">The proxy now scans the system prompt with the model. Claude Code's system prompt is tens of KB and changes with memory and CLAUDE.md, so the first request per session pays a full pass. Measure before deciding anything.</p>
+          </div>
+          <div class="phase-progress"><span class="count">0 / 0</span><div class="bar"><i></i></div></div>
+        </div>
+        <div class="steps">
+
+          <details class="step" id="s2-1">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Read the proxy latencies from the audit log</div><div class="sub">First request vs later requests</div></div><div class="tags"><span class="tag gate">gate 2</span></div></summary>
+            <div class="body">
+              <pre class="cmd">node -e "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.env.HOME+'/.claude/plugins/data/hush/audit.sqlite');console.table(db.prepare(\"select session_id, min(latency_ms) fastest, max(latency_ms) slowest, count(distinct ts) requests from audit where event='proxy' group by session_id\").all())"</pre>
+              <div class="check pass"><b>Pass</b><span>Later requests mostly hit the memo and sit under about 2 s. The first request is the outlier; note its number.</span></div>
+              <div class="check decide"><b>Decide</b><span>If the first request is too slow for daily use, switch <code>system</code> to <code>scanWithRegexAndVault</code> in <code>RequestRedaction.redactBody</code>. One line, and the system prompt is Claude Code's own text plus your CLAUDE.md, which you already see.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s2-2">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Time a 4 KB Rovo result, English</div><div class="sub">Gate 2 as written</div></div><div class="tags"><span class="tag gate">gate 2</span></div></summary>
+            <div class="body">
+              <p class="note">Fetch an English issue with a long description. The audit row for that request carries the scan time for the whole body, but the new tool result dominates since older blocks are memoized.</p>
+              <div class="check pass"><b>Pass</b><span>Under 2 s on the Arc Pro 140T with <code>"device":"dml"</code> in <code>/health</code>. On this Linux CPU expect 1 to 3 s.</span></div>
+              <div class="check decide"><b>Decide</b><span>Latency miss: shrink scope before adding hardware. Options in order: lower the size cap, skip the model for MCP results that the key pass already covered, regex-only for Bash data sources.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s2-3">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Fetch a Dutch issue and count misses</div><div class="sub">The model is English-trained</div></div><div class="tags"><span class="tag gate">gate 2</span><span class="tag decide">decide</span></div></summary>
+            <div class="body">
+              <p class="note">Pick an issue with Dutch names, a street address and a phone number. Compare what Claude sees with the source.</p>
+              <div class="check pass"><b>Pass</b><span>Names and addresses are tokens. Belgian identifiers are always caught by regex regardless of language.</span></div>
+              <div class="check decide"><b>Decide</b><span>Misses on person or location names trigger the deferred NER model, candidate <code>Xenova/bert-base-multilingual-cased-ner-hrl</code>, as a third detector in <code>detect()</code>. Misses on free-text phone formats are a regex addition instead.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s2-4">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Confirm DirectML on the Windows machine</div><div class="sub">Device selection is automatic; verify it happened</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
+            <div class="body">
+              <pre class="cmd">curl 127.0.0.1:47831/health
+findstr "model ready" %USERPROFILE%\.claude\plugins\data\hush\daemon.log</pre>
+              <div class="check pass"><b>Pass</b><span><code>"device":"dml"</code> and a log line <code>model ready on dml</code>.</span></div>
+              <div class="check fail"><b>If not</b><span>onnxruntime-node fell back or failed to load the DirectML provider. Set <code>"device":"cpu"</code> in the machine config to keep working, then check the onnxruntime-node version bundled with @huggingface/transformers 4.2 supports DML on your build.</span></div>
+            </div>
+          </details>
+
+        </div>
+      </section>
+
+      <section class="phase" id="p3" data-phase="Tests and CI">
+        <div class="phase-head">
+          <div>
+            <div class="eyebrow">Phase 3</div>
+            <h2>Make the proxy logic testable, add CI</h2>
+            <p class="why"><code>RequestRedaction</code> is the most security-relevant code and has no unit test because it needs the 900 MB model. Inject <code>detect</code>, stub it, and lock in the review fixes.</p>
+          </div>
+          <div class="phase-progress"><span class="count">0 / 0</span><div class="bar"><i></i></div></div>
+        </div>
+        <div class="steps">
+
+          <details class="step" id="s3-1">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Move RequestRedaction to daemon/redaction.ts with detect injected</div><div class="sub">Constructor takes (allowlist, detect)</div></div><div class="tags"></div></summary>
+            <div class="body">
+              <p class="note">Pure move plus one parameter. <code>server.ts</code> passes the real <code>detect</code>; tests pass a stub that returns fixed spans for known strings.</p>
+              <div class="check pass"><b>Pass</b><span>Existing 8 tests still pass, daemon smoke test unchanged.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s3-2">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Write the redaction tests</div><div class="sub">One test per row of the treatment table</div></div><div class="tags"></div></summary>
+            <div class="body">
+              <p class="note">Assert: system string and system text blocks scanned; user text scanned; Read result gets regex plus vault-known replacement and no model call; MCP result over 32 KB replaced with the size-cap message; MCP result under the cap goes through the key pass then the model; assistant content untouched; tool_result paired with the right tool_use across messages; label counts correct.</p>
+              <pre class="cmd">npm test</pre>
+              <div class="check pass"><b>Pass</b><span>All green, and the stub records that <code>detect</code> was never called with <code>useModel = true</code> for the Read result.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s3-3">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Add the GitHub Actions workflow</div><div class="sub">Node 24, npm ci, npm test</div></div><div class="tags"></div></summary>
+            <div class="body">
+              <pre class="cmd">mkdir -p .github/workflows
+cat &gt; .github/workflows/test.yml &lt;&lt;'EOF'
+name: test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: npm ci
+      - run: npm test
+EOF</pre>
+              <div class="check pass"><b>Pass</b><span>Green check on the next push. Add the badge to README.md.</span></div>
+              <div class="check fail"><b>If not</b><span><code>npm ci</code> needs <code>package-lock.json</code> committed; it is. onnxruntime-node's postinstall must succeed on ubuntu-latest, which it does for x64.</span></div>
+            </div>
+          </details>
+
+        </div>
+      </section>
+
+      <section class="phase" id="p4" data-phase="Benchmark">
+        <div class="phase-head">
+          <div>
+            <div class="eyebrow">Phase 4</div>
+            <h2>Build a detection fixture set</h2>
+            <p class="why">Gate 2's Dutch decision needs numbers, not one issue. A small labelled set also catches regressions when transformers.js or the model updates.</p>
+          </div>
+          <div class="phase-progress"><span class="count">0 / 0</span><div class="bar"><i></i></div></div>
+        </div>
+        <div class="steps">
+
+          <details class="step" id="s4-1">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Write bench/fixtures.json</div><div class="sub">Ten English, ten Dutch snippets with expected spans</div></div><div class="tags"></div></summary>
+            <div class="body">
+              <pre class="cmd">[
+  { "text": "Klant Marie Dupont, Wetstraat 16, 1000 Brussel, belde over rekening BE68 5390 0754 7034.",
+    "expect": [["Marie Dupont","private_person"],["Wetstraat 16, 1000 Brussel","private_address"],["BE68 5390 0754 7034","account_number"]] }
+]</pre>
+              <p class="note">Use invented people. Cover names, addresses, phones in local formats, RRNs, IBANs, dates of birth, and two negatives that must not be tagged, such as a product name and a company name.</p>
+              <div class="check pass"><b>Pass</b><span>Twenty entries, each reviewed by you, no real people.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s4-2">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Write bench/run.ts and wire npm run bench</div><div class="sub">Recall per label and language, p50 latency</div></div><div class="tags"><span class="tag decide">decide</span></div></summary>
+            <div class="body">
+              <pre class="cmd">npm run bench</pre>
+              <p class="note">Loads the model once, runs <code>detect</code> over every fixture, counts an expected span as found when a detected span covers it with the same label family. Prints a table per language.</p>
+              <div class="check pass"><b>Pass</b><span>English recall high on every label. Dutch person and address recall is the number that decides the NER model.</span></div>
+              <div class="check decide"><b>Decide</b><span>Dutch person recall under roughly 80%: add the NER model. Above: close the deferred item in DESIGN.md.</span></div>
+            </div>
+          </details>
+
+        </div>
+      </section>
+
+      <section class="phase" id="p5" data-phase="Release">
+        <div class="phase-head">
+          <div>
+            <div class="eyebrow">Phase 5</div>
+            <h2>Release hygiene</h2>
+            <p class="why">Small things an open-source visitor looks for, plus one gap that leaves fresh installs silently unprotected.</p>
+          </div>
+          <div class="phase-progress"><span class="count">0 / 0</span><div class="bar"><i></i></div></div>
+        </div>
+        <div class="steps">
+
+          <details class="step" id="s5-1">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Decide whether SessionStart installs dependencies itself</div><div class="sub">Convenience versus running npm in a hook</div></div><div class="tags"><span class="tag decide">decide</span></div></summary>
+            <div class="body">
+              <div class="callout">Today a fresh install reports "dependencies missing" and does nothing until the user runs hush-setup. Auto-running <code>npm install</code> in the SessionStart hook fixes that but adds network access and a minute of wait to a hook with a 30 s timeout.</div>
+              <div class="check decide"><b>Decide</b><span>Option A: keep manual, but make the SessionStart message impossible to miss. Option B: spawn <code>npm install</code> detached, same as the daemon, and report "installing" until it finishes. B is about ten lines.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s5-2">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Add CHANGELOG.md and SECURITY.md</div><div class="sub">State what is and is not protected</div></div><div class="tags"></div></summary>
+            <div class="body">
+              <p class="note">SECURITY.md should say plainly: loopback only, token-gated reveal endpoints, global vault per OS user, repo-trusted <code>.hush/config.json</code>, transcript keeps raw values, English-trained model. CHANGELOG starts at 0.1.0 with the review fixes.</p>
+              <div class="check pass"><b>Pass</b><span>Both files linked from README.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s5-3">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Tag v0.1.0 and publish a GitHub release</div><div class="sub">Only after phase 1 passes</div></div><div class="tags"></div></summary>
+            <div class="body">
+              <pre class="cmd">git tag -a v0.1.0 -m "cc-hush 0.1.0"
+git push origin v0.1.0
+gh release create v0.1.0 --title "cc-hush 0.1.0" --notes-file CHANGELOG.md</pre>
+              <div class="check pass"><b>Pass</b><span>Release visible on GitHub. <code>.claude-plugin/plugin.json</code> and <code>package.json</code> both say 0.1.0; the SessionStart hook restarts running daemons on the next version bump.</span></div>
+            </div>
+          </details>
+
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer>
+    <span>cc-hush · <a href="https://github.com/DenEwout/cc-hush">github.com/DenEwout/cc-hush</a> · plan written 2026-09-04</span>
+    <span>Checkboxes are stored in this browser only.</span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const KEY = 'cc-hush-next-steps';
+  const steps = [...document.querySelectorAll('details.step')];
+  const phases = [...document.querySelectorAll('section.phase')];
+  const nav = document.getElementById('phaseNav');
+
+  const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { return {}; } };
+  const save = (state) => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {} };
+  let state = load();
+
+  phases.forEach((phase, i) => {
+    const a = document.createElement('a');
+    a.href = '#' + phase.id;
+    a.innerHTML = `<span class="n">${i + 1}</span><span>${phase.dataset.phase}</span><span class="c"></span>`;
+    const li = document.createElement('li');
+    li.appendChild(a);
+    nav.appendChild(li);
+  });
+
+  function render() {
+    let done = 0, phasesDone = 0;
+    phases.forEach((phase, i) => {
+      const inPhase = [...phase.querySelectorAll('details.step')];
+      const n = inPhase.filter((s) => state[s.id]).length;
+      done += n;
+      if (n === inPhase.length) phasesDone++;
+      phase.querySelector('.count').textContent = `${n} / ${inPhase.length}`;
+      phase.querySelector('.bar > i').style.width = `${(n / inPhase.length) * 100}%`;
+      const link = nav.children[i].firstChild;
+      link.querySelector('.c').textContent = `${n}/${inPhase.length}`;
+      link.classList.toggle('done', n === inPhase.length);
+    });
+    steps.forEach((s) => {
+      s.classList.toggle('done', !!state[s.id]);
+      s.querySelector('summary input').checked = !!state[s.id];
+    });
+    document.getElementById('doneCount').textContent = done;
+    document.getElementById('totalCount').textContent = steps.length;
+    document.getElementById('overallBar').style.width = `${(done / steps.length) * 100}%`;
+    document.getElementById('phaseSummary').textContent = `${phasesDone} of ${phases.length} phases complete`;
+  }
+
+  steps.forEach((s) => {
+    const box = s.querySelector('summary input');
+    box.addEventListener('click', (e) => e.stopPropagation());
+    box.addEventListener('change', () => { state[s.id] = box.checked; save(state); render(); });
+  });
+
+  document.getElementById('reset').addEventListener('click', () => {
+    if (!confirm('Clear all checkmarks?')) return;
+    state = {}; save(state); render();
+  });
+
+  document.querySelectorAll('.cmd').forEach((pre) => {
+    const command = pre.textContent.trimEnd();
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = 'Copy';
+    b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(command); b.textContent = 'Copied'; }
+      catch { b.textContent = 'Select and copy'; }
+      setTimeout(() => (b.textContent = 'Copy'), 1500);
+    });
+    pre.appendChild(b);
+  });
+
+  const firstOpen = steps.find((s) => !state[s.id]);
+  if (firstOpen) firstOpen.open = true;
+  render();
+})();
+</script>
