@@ -165,9 +165,9 @@
 <div class="page">
   <header>
     <div>
-      <div class="eyebrow">cc-hush · from curl-verified to session-proven</div>
+      <div class="eyebrow">cc-hush 0.2.0 · install, then prove it in a session</div>
       <h1>Next steps before building more</h1>
-      <p class="lede">Everything so far was verified against the daemon with curl. Nothing has run inside a real Claude Code session yet. Work top to bottom: phase 1 and 2 can change the design, the rest lock it in. Steps marked <span class="tag gate">gate</span> map to the acceptance gates in DESIGN.md. Progress is saved in this browser.</p>
+      <p class="lede">The daemon is now an npm global with a startup service and the plugin is hooks and skills only. None of that has run on this machine yet. Work top to bottom: phase 1 installs and proves it in a session, phase 2 can still change the design, the rest lock it in. Steps marked <span class="tag gate">gate</span> map to the acceptance gates in DESIGN.md. Progress is saved in this browser.</p>
       <p class="lede" style="margin-top:8px">What this proves in the end: <span class="strike">Sarah Connor</span> leaves the machine as <span class="token">&lt;PII:person:1&gt;</span>, and comes back as Sarah Connor only where you allow it.</p>
     </div>
     <div class="overall">
@@ -189,69 +189,104 @@
 
     <main id="phases">
 
-      <section class="phase" id="p1" data-phase="Dogfood">
+      <section class="phase" id="p1" data-phase="Install">
         <div class="phase-head">
           <div>
-            <div class="eyebrow">Phase 1 · gates 1, 3, 8</div>
-            <h2>Run it inside a real Claude Code session</h2>
-            <p class="why">Three things curl cannot show: whether plugin command hooks fire on tool events on your machine, whether streaming responses survive the proxy, and whether <code>updatedInput</code> really lands the real name in the file.</p>
+            <div class="eyebrow">Phase 1 · install on this machine</div>
+            <h2>Move to the npm daemon and the split plugin</h2>
+            <p class="why">Since 0.2.0 the daemon is an npm global (<code>cc-hush</code>) with a startup service, and the plugin under <code>plugin/</code> is hooks and skills only. On this Windows machine the old plugin still runs from the repo root and its <code>hooks/</code> moved, so nothing fires until step 4 is done. The old daemon (v0.1.0, started from <code>daemon/server.ts</code> by the old hook) still holds the port.</p>
           </div>
           <div class="phase-progress"><span class="count">0 / 0</span><div class="bar"><i></i></div></div>
         </div>
         <div class="steps">
 
           <details class="step" id="s1-1">
-            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Install the daemon globally and register the startup service</div><div class="sub">npm package, separate from the plugin</div></div><div class="tags"></div></summary>
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Stop the old daemon and keep the 917 MB model</div><div class="sub">Data moves from the plugin data dir to ~/.cc-hush</div></div><div class="tags"></div></summary>
             <div class="body">
-              <pre class="cmd">npm i -g .            # from the checkout; later: npm i -g cc-hush
-cc-hush install
-cc-hush status</pre>
-              <div class="check pass"><b>Pass</b><span>Model download shows progress, the service is registered (<code>schtasks /query /tn cc-hush</code>, <code>launchctl print gui/$UID/com.cc-hush.daemon</code> or <code>systemctl --user status cc-hush</code>), <code>status</code> shows <code>"model":"ready"</code>, and install reports what it did to <code>ANTHROPIC_BASE_URL</code>.</span></div>
-              <div class="check fail"><b>If not</b><span>Read <code>~/.cc-hush/daemon.log</code>. On Windows an S4U task that never starts means the account lacks "Log on as a batch job"; run <code>cc-hush start --log</code> by hand and file an issue. Another value in <code>ANTHROPIC_BASE_URL</code> is left alone on purpose: move it to <code>upstream</code> in <code>~/.cc-hush/config.json</code>.</span></div>
+              <pre class="cmd">curl -s -X POST -H "x-hush-token: $(cat ~/.claude/plugins/data/hush-cc-hush/token)" 127.0.0.1:47831/shutdown
+mkdir -p ~/.cc-hush &amp;&amp; mv ~/.claude/plugins/data/hush-cc-hush/models ~/.cc-hush/models</pre>
+              <p class="note">Git Bash syntax. <code>hush-cc-hush</code> is the plugin data dir on this machine; check with <code>ls ~/.claude/plugins/data</code>. Skipping the move only costs a fresh download in the next step.</p>
+              <div class="check pass"><b>Pass</b><span><code>curl 127.0.0.1:47831/health</code> fails to connect. <code>ls ~/.cc-hush/models</code> lists the cached <code>openai</code> model folder.</span></div>
+              <div class="check fail"><b>If not</b><span>A 401 on shutdown means the token path is wrong; the daemon prints the expected file in the error. If the port is still bound, find the process with <code>netstat -ano | findstr 47831</code> and stop it.</span></div>
             </div>
           </details>
 
           <details class="step" id="s1-2">
-            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Install the plugin from the local checkout</div><div class="sub">Marketplace add from the repo path, then install</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Install the daemon globally and register the startup service</div><div class="sub">One command does model, service, start, settings</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
             <div class="body">
-              <pre class="cmd">claude plugin marketplace add /home/ewout/IdeaProjects/personal/cc-hush
-claude plugin install hush@cc-hush
-claude plugin list</pre>
-              <div class="check pass"><b>Pass</b><span><code>hush</code> appears in the plugin list with version 0.2.0. The plugin cache holds only <code>hooks/</code> and <code>skills/</code>, no <code>node_modules</code> needed.</span></div>
-              <div class="check fail"><b>If not</b><span>Check <code>.claude-plugin/marketplace.json</code> is picked up: <code>claude plugin marketplace list</code> should show <code>cc-hush</code>, and its <code>source</code> is <code>./plugin</code>.</span></div>
+              <pre class="cmd">npm i -g .            # from the checkout; after npm publish: npm i -g cc-hush
+cc-hush install
+cc-hush status
+schtasks /query /tn cc-hush /v /fo list</pre>
+              <div class="check pass"><b>Pass</b><span>Model files print <code>done</code> without a download. Install says <code>scheduled task "cc-hush" registered, runs at logon of AzureAD\EwoutVanGossum</code>, then <code>daemon v0.2.0 up on http://127.0.0.1:47831 (model ready)</code>, then that <code>ANTHROPIC_BASE_URL</code> is <code>http://127.0.0.1:8787/w/claude</code> and was left unchanged. <code>schtasks</code> shows Status: Running. No console window appeared.</span></div>
+              <div class="check fail"><b>If not</b><span><code>schtasks</code> rejects the XML: check <code>~/.cc-hush/cc-hush.task.xml</code>, the <code>UserId</code> must be <code>AzureAD\EwoutVanGossum</code>. Task registered but daemon never up and <code>daemon.log</code> empty: the S4U logon type is refused for this account ("has not been granted the requested logon type"). Run <code>cc-hush start --log</code> by hand to keep working and open an issue to switch the task to an interactive logon with a hidden launcher. <code>daemon.log</code> says port in use: step 1 was skipped. A console window flashing at logon is the same S4U problem.</span></div>
             </div>
           </details>
 
           <details class="step" id="s1-3">
-            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Point Claude Code at the proxy and restart</div><div class="sub">One env line in settings.json</div></div><div class="tags"></div></summary>
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Chain the caveman proxy behind hush</div><div class="sub">Claude Code → hush → caveman → Anthropic</div></div><div class="tags"></div></summary>
             <div class="body">
-              <pre class="cmd">{ "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:47831" } }</pre>
-              <p class="note">Add that to <code>~/.claude/settings.json</code>, restart Claude Code, wait for the first SessionStart. <code>cc-hush install</code> already put the model in <code>~/.cc-hush/models</code>; on this Linux machine it is already there.</p>
-              <div class="check pass"><b>Pass</b><span>The session context contains "cc-hush daemon v0.2.0 running (model ready)" and no WARNING about ANTHROPIC_BASE_URL. <code>curl 127.0.0.1:47831/health</code> shows <code>"model":"ready"</code>.</span></div>
-              <div class="check fail"><b>If not</b><span>Read <code>~/.cc-hush/daemon.log</code>. A port-in-use line means an older daemon is alive; stop it with <code>POST /shutdown</code> and the token header.</span></div>
+              <pre class="cmd">echo '{ "upstream": "http://127.0.0.1:8787/w/claude" }' &gt; ~/.cc-hush/config.json
+cc-hush install                       # re-run: restarts the daemon with the new upstream
+cc-hush status</pre>
+              <p class="note">Then set <code>ANTHROPIC_BASE_URL</code> to <code>http://127.0.0.1:47831</code> in <code>~/.claude/settings.json</code> yourself; install refuses to overwrite a value it did not put there. Caveman now only ever sees redacted text.</p>
+              <div class="check pass"><b>Pass</b><span><code>status</code> shows <code>"upstream":"http://127.0.0.1:8787/w/claude"</code> and <code>"device":"dml"</code>. The caveman proxy is running on 8787.</span></div>
+              <div class="check fail"><b>If not</b><span>Upstream unchanged: the daemon did not restart; <code>cc-hush stop</code> then <code>schtasks /run /tn cc-hush</code>. <code>"device":"cpu"</code> on this machine means DirectML failed to load; see phase 2.</span></div>
             </div>
           </details>
 
           <details class="step" id="s1-4">
-            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Confirm the PreToolUse hook fires</div><div class="sub">Gate 1. The whole guard depends on this</div></div><div class="tags"><span class="tag gate">gate 1</span><span class="tag risk">risk</span></div></summary>
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Install the plugin from plugin/</div><div class="sub">The marketplace source is now ./plugin</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
             <div class="body">
-              <p class="note">In a scratch repo, ask Claude to run <code>git push --force origin main</code>. Do not worry, it should never execute.</p>
-              <div class="check pass"><b>Pass</b><span>Claude reports a denial with the reason <code>cc-hush: Force push to main/master</code>. The audit table has a <code>PreToolUse / deny</code> row.</span></div>
-              <div class="check fail"><b>If not</b><span>On Windows this is issue #34573: plugin command hooks on tool events dropped. Copy the <code>UserPromptSubmit</code> and <code>PreToolUse</code> entries from <code>hooks/hooks.json</code> into <code>~/.claude/settings.json</code> under <code>hooks</code>, with the absolute plugin path instead of <code>${CLAUDE_PLUGIN_ROOT}</code>. Record the outcome in DESIGN.md.</span></div>
-              <pre class="cmd">node -e "const {DatabaseSync}=require('node:sqlite');console.log(new DatabaseSync(process.env.HOME+'/.cc-hush/audit.sqlite').prepare('select ts,event,tool_name,decision from audit order by ts desc limit 10').all())"</pre>
+              <pre class="cmd">claude plugin marketplace add C:\Users\EwoutVanGossum\IdeaProjects\personal\cc-hush
+claude plugin install hush@cc-hush
+claude plugin list</pre>
+              <p class="note">Today <code>hush</code> is not in <code>claude plugin list</code>; it was loaded from the repo root (the <code>cc-hush</code> entry in <code>extraKnownMarketplaces</code>, or <code>--plugin-dir</code>). If you keep using <code>--plugin-dir</code>, point it at <code>...\cc-hush\plugin</code>. Once <code>npm publish</code> and a GitHub push are done, visitors use <code>claude plugin marketplace add DenEwout/cc-hush</code> instead of the path.</p>
+              <div class="check pass"><b>Pass</b><span><code>hush@cc-hush</code> listed at version 0.2.0. <code>claude plugin details hush@cc-hush</code> counts 3 hooks and 5 skills and no dependencies.</span></div>
+              <div class="check fail"><b>If not</b><span>Marketplace already known but stale: <code>claude plugin marketplace update cc-hush</code>, or <code>remove</code> and <code>add</code> again. <code>claude plugin validate plugin</code> from the repo checks the manifest.</span></div>
             </div>
           </details>
 
           <details class="step" id="s1-5">
-            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Have a normal conversation through the proxy</div><div class="sub">Streaming, tool use, multiple turns</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Restart Claude Code and read the SessionStart line</div><div class="sub">Both halves agree</div></div><div class="tags"></div></summary>
             <div class="body">
-              <p class="note">Ask Claude to read a file, edit it, run a test. Watch for stalls or truncated output. Responses are piped through untouched, but headers and chunking are the place a proxy usually breaks.</p>
-              <div class="check pass"><b>Pass</b><span>Text streams as usual. <code>daemon.log</code> has no <code>[hush]</code> error lines. Audit shows <code>proxy / redacted</code> rows with a latency you can live with.</span></div>
-              <div class="check fail"><b>If not</b><span>Compare the request Claude Code sent with what reached upstream: run the echo upstream from the session scratchpad with <code>HUSH_UPSTREAM</code>, or add a one-off log line in <code>forwardUpstream</code>.</span></div>
+              <div class="check pass"><b>Pass</b><span>The session context contains "cc-hush daemon v0.2.0 running (model ready)." and no WARNING about <code>ANTHROPIC_BASE_URL</code>.</span></div>
+              <div class="check fail"><b>If not</b><span>WARNING present: step 3 was applied to a different settings file than the one Claude reads (<code>CLAUDE_CONFIG_DIR</code>), or Claude Code was not restarted. "started by this hook, not by the startup service": the task is not running, see step 6. "not reachable": <code>cc-hush</code> is not on the PATH Claude Code inherits; check <code>where cc-hush</code> from the same shell.</span></div>
             </div>
           </details>
 
           <details class="step" id="s1-6">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Prove the service, the hook fallback, and a real logon</div><div class="sub">Three ways the daemon comes back</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
+            <div class="body">
+              <pre class="cmd">cc-hush stop &amp;&amp; cc-hush status                    # {"ok":false,...}: a clean exit is not restarted
+schtasks /run /tn cc-hush &amp;&amp; sleep 5 &amp;&amp; cc-hush status   # service brings it back
+cc-hush stop                                        # now open a new Claude Code session</pre>
+              <p class="note">Then sign out of Windows and back in (or reboot). Within a minute <code>cc-hush status</code> must be ready without any window opening.</p>
+              <div class="check pass"><b>Pass</b><span><code>schtasks /run</code> gives a ready daemon. The new session's SessionStart says "started by this hook, not by the startup service" and suggests <code>cc-hush install</code>. After logon the daemon is up on its own and <code>daemon.log</code> shows one new <code>listening</code> line.</span></div>
+              <div class="check fail"><b>If not</b><span>Hook fallback silent: Claude Code's PATH lacks the npm global bin; run <code>npm prefix -g</code> and compare. No daemon after logon: <code>schtasks /query /tn cc-hush /v /fo list</code>, look at Last Result (0x41303 means never ran, 0x80070569 is the logon-type refusal) and <code>Get-WinEvent -LogName Microsoft-Windows-TaskScheduler/Operational -MaxEvents 20</code>.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s1-7">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Confirm the PreToolUse hook fires</div><div class="sub">Gate 1. The whole guard depends on this</div></div><div class="tags"><span class="tag gate">gate 1</span><span class="tag risk">risk</span></div></summary>
+            <div class="body">
+              <p class="note">In a scratch repo, ask Claude to run <code>git push --force origin main</code>. Do not worry, it should never execute.</p>
+              <div class="check pass"><b>Pass</b><span>Claude reports a denial with the reason <code>cc-hush: Force push to main/master</code>. The audit table has a <code>PreToolUse / deny</code> row.</span></div>
+              <div class="check fail"><b>If not</b><span>On Windows this is issue #34573: plugin command hooks on tool events dropped. Copy the <code>UserPromptSubmit</code> and <code>PreToolUse</code> entries from <code>plugin/hooks/hooks.json</code> into <code>~/.claude/settings.json</code> under <code>hooks</code>, with the absolute path of <code>plugin/</code> instead of <code>${CLAUDE_PLUGIN_ROOT}</code>. Record the outcome in DESIGN.md.</span></div>
+              <pre class="cmd">node -e "const {DatabaseSync}=require('node:sqlite');console.log(new DatabaseSync(process.env.HOME+'/.cc-hush/audit.sqlite').prepare('select ts,event,tool_name,decision from audit order by ts desc limit 10').all())"</pre>
+            </div>
+          </details>
+
+          <details class="step" id="s1-8">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Have a normal conversation through the proxy</div><div class="sub">Streaming, tool use, multiple turns, two proxies deep</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
+            <div class="body">
+              <p class="note">Ask Claude to read a file, edit it, run a test. Watch for stalls or truncated output. Responses are piped through untouched, but headers and chunking are the place a proxy usually breaks, and there are now two in the chain.</p>
+              <div class="check pass"><b>Pass</b><span>Text streams as usual. <code>~/.cc-hush/daemon.log</code> has no <code>[hush]</code> error lines. Audit shows <code>proxy / redacted</code> rows with a latency you can live with. Caveman's own dashboard still counts the requests.</span></div>
+              <div class="check fail"><b>If not</b><span>Set <code>upstream</code> to <code>https://api.anthropic.com</code> for one session to find out which proxy breaks it. Compare the request Claude Code sent with what reached upstream: run the echo upstream from the session scratchpad with <code>HUSH_UPSTREAM</code>, or add a one-off log line in <code>forwardUpstream</code>.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s1-9">
             <summary><input type="checkbox" aria-label="Done"><div><div class="title">Round trip a real name through Rovo, a file, and back</div><div class="sub">Gate 3. The vault loop end to end</div></div><div class="tags"><span class="tag gate">gate 3</span></div></summary>
             <div class="body">
               <p class="note">Ask Claude to fetch a Jira issue through Rovo and write the reporter's name into <code>notes.md</code>, then ask it to <code>cat notes.md</code>.</p>
@@ -261,13 +296,26 @@ claude plugin list</pre>
             </div>
           </details>
 
-          <details class="step" id="s1-7">
+          <details class="step" id="s1-10">
             <summary><input type="checkbox" aria-label="Done"><div><div class="title">Kill the daemon mid-session</div><div class="sub">Gate 8. Fail closed, both directions</div></div><div class="tags"><span class="tag gate">gate 8</span></div></summary>
             <div class="body">
-              <pre class="cmd">curl -s -X POST -H "x-hush-token: $(cat ~/.cc-hush/token)" 127.0.0.1:47831/shutdown</pre>
+              <pre class="cmd">cc-hush stop</pre>
               <p class="note">Then send Claude a message, and separately ask it to run any Bash command.</p>
-              <div class="check pass"><b>Pass</b><span>The API call fails with an unreachable-server error. The tool call is blocked with "privacy daemon unavailable". Nothing was sent unredacted. A new session, or running <code>node hooks/ensure-daemon.ts</code>, brings the daemon back.</span></div>
+              <div class="check pass"><b>Pass</b><span>The API call fails with an unreachable-server error. The tool call is blocked with "privacy daemon unavailable". Nothing was sent unredacted. <code>schtasks /run /tn cc-hush</code> or a new session brings the daemon back.</span></div>
               <div class="check fail"><b>If not</b><span>If the tool call ran, the hook did not fire (see gate 1). If the API call succeeded, <code>ANTHROPIC_BASE_URL</code> is not in effect for that session.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s1-11">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Uninstall, then install again</div><div class="sub">The reverse path works and install is idempotent</div></div><div class="tags"></div></summary>
+            <div class="body">
+              <pre class="cmd">cc-hush uninstall
+schtasks /query /tn cc-hush          # ERROR: The system cannot find the file specified.
+cc-hush status                       # {"ok":false,...}
+ls ~/.cc-hush                        # models, token, audit.sqlite, config.json still there
+cc-hush install</pre>
+              <div class="check pass"><b>Pass</b><span>Task gone and daemon down after uninstall, data kept. Reinstall finishes in seconds with no download, the task is back, <code>status</code> is ready, and the vault is empty (new process, in-memory vault).</span></div>
+              <div class="check fail"><b>If not</b><span>Task still listed: <code>schtasks /delete /f /tn cc-hush</code> by hand and check the account can delete its own tasks. Reinstall downloads again: <code>HUSH_DATA</code> is set in this shell to a different dir.</span></div>
             </div>
           </details>
 
@@ -316,7 +364,7 @@ claude plugin list</pre>
             <summary><input type="checkbox" aria-label="Done"><div><div class="title">Confirm DirectML on the Windows machine</div><div class="sub">Device selection is automatic; verify it happened</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
             <div class="body">
               <pre class="cmd">curl 127.0.0.1:47831/health
-findstr "model ready" %USERPROFILE%\.claude\plugins\data\hush\daemon.log</pre>
+findstr "model ready" %USERPROFILE%\.cc-hush\daemon.log</pre>
               <div class="check pass"><b>Pass</b><span><code>"device":"dml"</code> and a log line <code>model ready on dml</code>.</span></div>
               <div class="check fail"><b>If not</b><span>onnxruntime-node fell back or failed to load the DirectML provider. Set <code>"device":"cpu"</code> in the machine config to keep working, then check the onnxruntime-node version bundled with @huggingface/transformers 4.2 supports DML on your build.</span></div>
             </div>
@@ -340,7 +388,7 @@ findstr "model ready" %USERPROFILE%\.claude\plugins\data\hush\daemon.log</pre>
             <summary><input type="checkbox" aria-label="Done"><div><div class="title">Move RequestRedaction to daemon/redaction.ts with detect injected</div><div class="sub">Constructor takes (allowlist, detect)</div></div><div class="tags"></div></summary>
             <div class="body">
               <p class="note">Pure move plus one parameter. <code>server.ts</code> passes the real <code>detect</code>; tests pass a stub that returns fixed spans for known strings.</p>
-              <div class="check pass"><b>Pass</b><span>Existing 8 tests still pass, daemon smoke test unchanged.</span></div>
+              <div class="check pass"><b>Pass</b><span>Existing 9 tests still pass, daemon smoke test unchanged.</span></div>
             </div>
           </details>
 
@@ -419,7 +467,7 @@ EOF</pre>
           <div>
             <div class="eyebrow">Phase 5</div>
             <h2>Release hygiene</h2>
-            <p class="why">Small things an open-source visitor looks for, plus one gap that leaves fresh installs silently unprotected.</p>
+            <p class="why">Small things an open-source visitor looks for, and the npm publish that makes <code>npm i -g cc-hush</code> real.</p>
           </div>
           <div class="phase-progress"><span class="count">0 / 0</span><div class="bar"><i></i></div></div>
         </div>
@@ -429,18 +477,30 @@ EOF</pre>
           <details class="step" id="s5-2">
             <summary><input type="checkbox" aria-label="Done"><div><div class="title">Add CHANGELOG.md and SECURITY.md</div><div class="sub">State what is and is not protected</div></div><div class="tags"></div></summary>
             <div class="body">
-              <p class="note">SECURITY.md should say plainly: loopback only, token-gated reveal endpoints, global vault per OS user, repo-trusted <code>.hush/config.json</code>, transcript keeps raw values, English-trained model. CHANGELOG starts at 0.1.0 with the review fixes.</p>
+              <p class="note">SECURITY.md should say plainly: loopback only, token-gated reveal endpoints, global vault per OS user, repo-trusted <code>.hush/config.json</code>, transcript keeps raw values, English-trained model. CHANGELOG has 0.1.0 (review fixes) and 0.2.0 (npm global daemon with startup service, plugin split to <code>plugin/</code>, data dir moved to <code>~/.cc-hush</code>).</p>
               <div class="check pass"><b>Pass</b><span>Both files linked from README.</span></div>
             </div>
           </details>
 
           <details class="step" id="s5-3">
-            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Tag v0.1.0 and publish a GitHub release</div><div class="sub">Only after phase 1 passes</div></div><div class="tags"></div></summary>
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Publish cc-hush to npm</div><div class="sub">Makes the README's first line true</div></div><div class="tags"><span class="tag risk">risk</span></div></summary>
             <div class="body">
-              <pre class="cmd">git tag -a v0.1.0 -m "cc-hush 0.1.0"
-git push origin v0.1.0
-gh release create v0.1.0 --title "cc-hush 0.1.0" --notes-file CHANGELOG.md</pre>
-              <div class="check pass"><b>Pass</b><span>Release visible on GitHub. <code>.claude-plugin/plugin.json</code> and <code>package.json</code> both say 0.1.0; the SessionStart hook restarts running daemons on the next version bump.</span></div>
+              <pre class="cmd">npm view cc-hush version          # E404 means the name is free
+npm pack --dry-run                # 10 files, bin/ and daemon/ only
+npm publish --access public
+npm view cc-hush version          # 0.2.0</pre>
+              <div class="check pass"><b>Pass</b><span>On another machine <code>npm i -g cc-hush &amp;&amp; cc-hush install</code> works with nothing else cloned.</span></div>
+              <div class="check fail"><b>If not</b><span>Name taken: publish as <code>@denewout/cc-hush</code>. The <code>bin</code> stays <code>cc-hush</code>, so the hook's fallback spawn and every doc command keep working; only the <code>npm i -g</code> line changes.</span></div>
+            </div>
+          </details>
+
+          <details class="step" id="s5-4">
+            <summary><input type="checkbox" aria-label="Done"><div><div class="title">Tag v0.2.0 and publish a GitHub release</div><div class="sub">Only after phase 1 passes</div></div><div class="tags"></div></summary>
+            <div class="body">
+              <pre class="cmd">git tag -a v0.2.0 -m "cc-hush 0.2.0"
+git push origin v0.2.0
+gh release create v0.2.0 --title "cc-hush 0.2.0" --notes-file CHANGELOG.md</pre>
+              <div class="check pass"><b>Pass</b><span>Release visible on GitHub. <code>plugin/.claude-plugin/plugin.json</code> and <code>package.json</code> both say 0.2.0. Upgrading is <code>npm i -g cc-hush@latest &amp;&amp; cc-hush install</code>; the hook no longer restarts daemons on a version change.</span></div>
             </div>
           </details>
 
@@ -451,7 +511,7 @@ gh release create v0.1.0 --title "cc-hush 0.1.0" --notes-file CHANGELOG.md</pre>
   </div>
 
   <footer>
-    <span>cc-hush · <a href="https://github.com/DenEwout/cc-hush">github.com/DenEwout/cc-hush</a> · plan written 2026-09-04</span>
+    <span>cc-hush · <a href="https://github.com/DenEwout/cc-hush">github.com/DenEwout/cc-hush</a> · plan written 2026-09-04, rewritten for 0.2.0 the same day</span>
     <span>Checkboxes are stored in this browser only.</span>
   </footer>
 </div>
