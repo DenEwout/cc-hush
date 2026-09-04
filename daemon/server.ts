@@ -225,12 +225,16 @@ function forwardUpstream(req: http.IncomingMessage, res: http.ServerResponse, bo
   const client = upstream.protocol === 'https:' ? https : http;
   const options = { host: upstream.hostname, port: upstream.port || undefined, method: req.method, path: upstream.pathname.replace(/\/$/, '') + req.url, headers };
   const upstreamRequest = client.request(options, (upstreamResponse) => {
+    const status = upstreamResponse.statusCode ?? 502;
+    if (status >= 400) console.error(`[hush] upstream ${status} for ${req.method} ${req.url}${upstreamResponse.headers['retry-after'] ? ` retry-after ${upstreamResponse.headers['retry-after']}` : ''}`);
     const responseHeaders = { ...upstreamResponse.headers };
     delete responseHeaders['transfer-encoding'];
-    res.writeHead(upstreamResponse.statusCode ?? 502, responseHeaders);
+    res.writeHead(status, responseHeaders);
+    upstreamResponse.on('error', (error) => { console.error('[hush] upstream stream broke:', error.message); res.destroy(); });
     upstreamResponse.pipe(res);
   });
   upstreamRequest.on('error', (error) => apiError(res, `upstream ${upstream.href} unreachable: ${error.message}`));
+  res.on('close', () => upstreamRequest.destroy());
   upstreamRequest.end(body);
 }
 
@@ -248,7 +252,7 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 }
 
 const apiError = (res: http.ServerResponse, message: string) =>
-  json(res, 502, { type: 'error', error: { type: 'api_error', message: `cc-hush: ${message}` } });
+  res.headersSent ? res.destroy() : json(res, 502, { type: 'error', error: { type: 'api_error', message: `cc-hush: ${message}` } });
 
 const health = () => ({ ok: true, version: VERSION, model: modelReady() ? 'ready' : 'loading', device, upstream: upstream.href, vault: size(), pid: process.pid });
 

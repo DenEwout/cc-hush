@@ -147,6 +147,8 @@ test('install: ANTHROPIC_BASE_URL merge into settings.json', async () => {
   assert.equal(mergeBaseUrl(undefined, true).upstream, undefined);
   assert.throws(() => mergeBaseUrl('{ not json'));
   const launcher = { node: '/usr/local/bin/node', script: '/usr/local/lib/node_modules/cc-hush/bin/cc-hush.ts' };
-  assert.equal(windowsLauncherVbs({ node: 'C:\\n\\node.exe', script: 'C:\\x y\\cc-hush.ts' }), 'CreateObject("WScript.Shell").Run """C:\\n\\node.exe"" ""C:\\x y\\cc-hush.ts"" start --log", 0, False\r\n');
+  const vbs = windowsLauncherVbs({ node: 'C:\\n\\node.exe', script: 'C:\\x y\\cc-hush.ts' });
+  assert.match(vbs, /^ {2}code = shell\.Run\("""C:\\n\\node\.exe"" ""C:\\x y\\cc-hush\.ts"" start --log", 0, True\)\r$/m);
+  assert.match(vbs, /Loop While code <> 0/);
   assert.match(systemdUnit(launcher), /ExecStart="\/usr\/local\/bin\/node" "\/usr\/local\/lib\/node_modules\/cc-hush\/bin\/cc-hush.ts" start --log/);
 });

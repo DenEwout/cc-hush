@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,7 +16,14 @@ const tryRun = (file: string, args: string[]) => { try { return run(file, args);
 const xml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 const uid = () => process.getuid?.() ?? 0;
 
-export const windowsLauncherVbs = ({ node, script }: Launcher) => `CreateObject("WScript.Shell").Run """${node}"" ""${script}"" start --log", 0, False\r\n`;
+export const windowsLauncherVbs = ({ node, script }: Launcher) => [
+  'Set shell = CreateObject("WScript.Shell")',
+  'Do',
+  `  code = shell.Run("""${node}"" ""${script}"" start --log", 0, True)`,
+  '  If code <> 0 Then WScript.Sleep 5000',
+  'Loop While code <> 0',
+  '',
+].join('\r\n');
 
 export const launchdPlist = ({ node, script }: Launcher) => `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -69,7 +76,7 @@ export function installService(launcher: Launcher): string {
 
 export function startService() {
   switch (process.platform) {
-    case 'win32': return run('wscript.exe', ['//B', '//Nologo', vbsFile]);
+    case 'win32': return spawn('wscript.exe', ['//B', '//Nologo', vbsFile], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     case 'darwin': return run('launchctl', ['kickstart', `gui/${uid()}/${LAUNCHD_LABEL}`]);
     default: return run('systemctl', ['--user', 'start', SYSTEMD_UNIT]);
   }

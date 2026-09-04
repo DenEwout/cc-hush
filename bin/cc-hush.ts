@@ -75,6 +75,7 @@ switch (command) {
       const log = fs.openSync(LOG_FILE, 'a');
       process.stdout.write = process.stderr.write = ((chunk: string | Uint8Array) => { fs.writeSync(log, chunk); return true; }) as typeof process.stdout.write;
     }
+    for (const event of ['uncaughtException', 'unhandledRejection'] as const) process.on(event, (error) => { console.error(`[hush] ${event}, exiting:`, error); process.exit(1); });
     await import('../daemon/server.ts');
     break;
   }

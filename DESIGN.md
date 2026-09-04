@@ -180,7 +180,7 @@ cc-hush/
   plugin/skills/*/SKILL.md
 ```
 
-`cc-hush install` is the only install path. No npm postinstall: it would run as root under `sudo npm i -g` and silently skip under `--ignore-scripts`. The service pins `process.execPath` and the absolute path of `bin/cc-hush.ts`; a Node switch means re-running install. Exit code 0 on `EADDRINUSE` is what stops launchd (`KeepAlive.SuccessfulExit=false`) and systemd (`Restart=on-failure`) from relaunching against a daemon that a hook already started. Windows uses a per-user Run key because `schtasks` refuses hidden (S4U) tasks without elevation; it has no restart-on-failure, the SessionStart hook covers that.
+`cc-hush install` is the only install path. No npm postinstall: it would run as root under `sudo npm i -g` and silently skip under `--ignore-scripts`. The service pins `process.execPath` and the absolute path of `bin/cc-hush.ts`; a Node switch means re-running install. Exit code 0 on `EADDRINUSE` is what stops launchd (`KeepAlive.SuccessfulExit=false`) and systemd (`Restart=on-failure`) from relaunching against a daemon that a hook already started. Windows uses a per-user Run key because `schtasks` refuses hidden (S4U) tasks without elevation; the `start.vbs` it points at loops on non-zero exit with a 5 s pause, which is the Windows restart-on-failure. The SessionStart hook prefers that launcher too when it exists, so a hook-started daemon is supervised and outlives the Claude Code process that started it.
 
 ## Acceptance gates
 

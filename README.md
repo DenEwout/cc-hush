@@ -138,7 +138,7 @@ curl -H "x-hush-token: $(cat ~/.cc-hush/token)" 127.0.0.1:47831/debug/vault
 - The local transcript keeps raw values. Only outbound traffic is redacted.
 - Redaction is memoized per block by content hash, which keeps prompt caching stable.
 - The service pins the Node binary that ran `cc-hush install`. After switching Node versions (nvm, fnm, volta), re-run `cc-hush install`.
-- On Windows a crashed daemon is not restarted until the next logon or the next Claude Code session (the SessionStart hook restarts it). launchd and systemd restart on failure.
+- All three launchers restart the daemon after a non-zero exit (the Windows `start.vbs` loops with a 5 s pause). Exit 0, from `cc-hush stop` or a port already in use, is final. Crashes land in `~/.cc-hush/daemon.log`.
 
 ## Development
 

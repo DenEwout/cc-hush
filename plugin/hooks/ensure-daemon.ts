@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -20,7 +21,10 @@ async function health(): Promise<{ version: string; model: string } | null> {
 }
 
 function startDaemonOutsideService() {
-  spawn('cc-hush', ['start', '--log'], { detached: true, stdio: 'ignore', shell: process.platform === 'win32', windowsHide: true })
+  const launcher = path.join(DATA, 'start.vbs');
+  const supervised = process.platform === 'win32' && fs.existsSync(launcher);
+  const [command, args] = supervised ? ['wscript.exe', ['//B', '//Nologo', launcher]] : ['cc-hush', ['start', '--log']];
+  spawn(command, args, { detached: true, stdio: 'ignore', shell: !supervised && process.platform === 'win32', windowsHide: true })
     .on('error', () => {})
     .unref();
 }
