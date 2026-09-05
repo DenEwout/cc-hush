@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
+
 export type Span = { start: number; end: number; label: string; score: number };
 
 export type Policy = {
@@ -16,8 +19,26 @@ const MIN_KNOWN_VALUE_LENGTH = 3;
 const tokenByValue = new Map<string, string>();
 const valueByToken = new Map<string, string>();
 const lastNumberByLabel = new Map<string, number>();
+let persist: ((value: string, token: string, label: string) => void) | undefined;
 
 const shortLabel = (label: string) => (label === 'account_number' ? 'account' : label.replace(/^private_/, ''));
+
+// Tokens live in transcripts that outlive any daemon process (claude --resume), so the map must too. The file holds
+// real values at the same trust level as Claude Code's own transcript on this disk.
+export function openVault(file: string): { close: () => void } {
+  const db = new DatabaseSync(file);
+  try { fs.chmodSync(file, 0o600); } catch {}
+  db.exec('CREATE TABLE IF NOT EXISTS vault(value TEXT PRIMARY KEY, token TEXT UNIQUE NOT NULL, label TEXT NOT NULL)');
+  tokenByValue.clear(); valueByToken.clear(); lastNumberByLabel.clear();
+  for (const row of db.prepare('SELECT value, token, label FROM vault').all() as { value: string; token: string; label: string }[]) {
+    tokenByValue.set(row.value, row.token);
+    valueByToken.set(row.token, row.value);
+    lastNumberByLabel.set(row.label, Math.max(lastNumberByLabel.get(row.label) ?? 0, Number(/:(\d+)>$/.exec(row.token)![1])));
+  }
+  const insert = db.prepare('INSERT OR IGNORE INTO vault VALUES (?, ?, ?)');
+  persist = (value, token, label) => { insert.run(value, token, label); };
+  return { close: () => { persist = undefined; db.close(); } };
+}
 
 export function tokenize(value: string, label: string): string {
   const existing = tokenByValue.get(value);
@@ -28,6 +49,7 @@ export function tokenize(value: string, label: string): string {
   const token = `<PII:${short}:${number}>`;
   tokenByValue.set(value, token);
   valueByToken.set(token, value);
+  persist?.(value, token, short);
   return token;
 }
 
@@ -56,6 +78,8 @@ export function rehydrateDeep<T>(value: T): T {
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, rehydrateDeep(v)])) as T;
   return value;
 }
+
+export const unresolvedTokens = (text: string) => [...new Set(text.match(TOKEN_RE) ?? [])].filter((token) => !valueByToken.has(token));
 
 export const mcpServer = (toolName: string) => /^mcp__(.+?)__/.exec(toolName)?.[1] ?? null;
 

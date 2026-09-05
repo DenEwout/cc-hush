@@ -24,7 +24,7 @@ Claude Code --http hooks--> hush daemon --/v1/*--> caveman proxy :8787 --> Anthr
                             |
                             +- privacy-filter (openai/privacy-filter, q4, DirectML)
                             +- Belgian + secret regex
-                            +- vault (in-memory, global)
+                            +- vault (SQLite, global, survives restarts)
                             +- audit (SQLite, node:sqlite)
 ```
 
@@ -68,7 +68,7 @@ Deferred: a Dutch NER model for person and location names. Added only if gate 2 
 
 ## Pseudonymization and the vault
 
-Detected values are replaced with stable tokens: `<PII:email:3>`, `<PII:person:1>`, `<PII:secret:2>`. The vault is one global in-memory map `real value -> token` for the daemon's lifetime. The same value always yields the same token, which keeps Anthropic prompt caching intact across turns and across sessions. The vault dies with the daemon; older tokens in a transcript then stop rehydrating. Accepted.
+Detected values are replaced with stable tokens: `<PII:email:3>`, `<PII:person:1>`, `<PII:secret:2>`. The vault is one global map `real value -> token`, held in memory and persisted to `~/.cc-hush/vault.sqlite` on every new token. The same value always yields the same token, which keeps Anthropic prompt caching intact across turns and across sessions. Persistence exists because transcripts outlive daemon processes: `claude --resume` after a restart used to hand Write a token nobody could resolve, and the file ended up with a literal placeholder. A whitelisted tool whose input still holds unknown tokens after rehydration now gets `ask` with the token names in the reason.
 
 Rehydration (token -> real value) happens in PreToolUse for tools listed in `allowPii.tools` and for MCP tools whose server is listed in `allowPii.mcpServers`. Everything else keeps the tokens in its input, so nothing leaks, at the cost of a literal `<PII:person:1>` landing in the target if Claude tries. Outputs of whitelisted MCP servers are still tokenized on the way in; the whitelist only governs what goes out.
 

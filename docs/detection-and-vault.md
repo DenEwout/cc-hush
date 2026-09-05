@@ -19,6 +19,7 @@ Deterministic, score 1, runs on every text including repo-local tool output.
 
 | Constant | Matches | Extra check |
 |---|---|---|
+| `EMAIL` | `jan@example.org` | none; the model misses addresses that do not look like a real person's, so this is deterministic |
 | `RIJKSREGISTERNUMMER` | `85.07.30-033.28` | mod 97, with the post-1999 `2` prefix variant |
 | `BELGIAN_IBAN` | `BE68 5390 0754 7034` | IBAN mod 97 |
 | `BELGIAN_VAT` | `BE0123.456.749` | |
@@ -61,12 +62,12 @@ stateDiagram-v2
     Tokenized --> Tokenized: same value → same token
     Tokenized --> Rehydrated: rehydrateDeep in PreToolUse<br/>whitelisted tool only
     Rehydrated --> Tokenized: value returns via Read/Grep/Bash<br/>redactKnown
-    Tokenized --> [*]: daemon exits, vault gone
+    Tokenized --> Tokenized: daemon restart<br/>reloaded from vault.sqlite
 ```
 
-- One global in-memory map for the daemon's lifetime, shared by every session of the same OS user. Stable tokens keep Anthropic prompt caching intact across turns and sessions.
+- One global map, held in memory and persisted to `~/.cc-hush/vault.sqlite` (mode 600), shared by every session of the same OS user. Stable tokens keep Anthropic prompt caching intact across turns, sessions and daemon restarts.
 - Token format `<PII:label:n>` with short labels: `email`, `person`, `phone`, `address`, `account`, `url`, `date`, `secret`.
-- Tokens from a previous daemon lifetime do not rehydrate; Claude is told to ask the user to re-provide the value.
+- Tokens the vault does not know (issued before the file existed, or on another machine) are not rehydrated; a whitelisted tool whose input still holds such tokens gets an ask with the token names, so no file silently ends up with placeholders.
 - `GET /debug/vault` dumps the map, protected by the local token header.
 
 ### Who receives real values

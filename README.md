@@ -23,7 +23,7 @@ Claude Code --http hooks--> hush daemon --/v1/*--> upstream (Anthropic or your o
                             |
                             +- privacy-filter model (onnxruntime: DirectML / CUDA / CPU)
                             +- Belgian + secret regex
-                            +- vault (in-memory, real value <-> token)
+                            +- vault (SQLite, real value <-> token, survives restarts)
                             +- audit (SQLite, labels and counts only)
 ```
 
@@ -127,11 +127,11 @@ curl -H "x-hush-token: $(cat ~/.cc-hush/token)" 127.0.0.1:47831/debug/vault
 
 ## Storage
 
-`~/.cc-hush/`: `models/`, `config.json`, `token`, `audit.sqlite` (`audit(ts, session_id, event, tool_name, label, count, decision, latency_ms)`, never values), `daemon.log`, and on Windows `start.vbs`.
+`~/.cc-hush/`: `models/`, `config.json`, `token`, `vault.sqlite` (real value, token, label; mode 600; the same data Claude Code's own transcripts already keep on this disk), `audit.sqlite` (`audit(ts, session_id, event, tool_name, label, count, decision, latency_ms)`, never values), `daemon.log`, and on Windows `start.vbs`.
 
 ## Limits
 
-- The vault is in memory. Tokens from a previous daemon lifetime do not rehydrate.
+- The vault lives in `~/.cc-hush/vault.sqlite`, so tokens survive daemon restarts and `claude --resume`. Tokens issued before that file existed, or on another machine, cannot be resolved; the Write and Edit hooks then ask before leaving literal placeholders in a file.
 - The model is English-trained. Dutch names are partly covered; a multilingual NER model is a planned addition if misses show up.
 - The local transcript keeps raw values. Only outbound traffic is redacted.
 - Redaction is memoized per block by content hash, which keeps prompt caching stable.

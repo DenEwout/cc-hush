@@ -5,7 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { detect, loadModel, modelReady } from './detect.ts';
-import { rehydrateDeep, isWhitelisted, dump, size, DEFAULT_POLICY, type Policy } from './vault.ts';
+import { openVault, rehydrateDeep, unresolvedTokens, isWhitelisted, dump, size, DEFAULT_POLICY, type Policy } from './vault.ts';
 import { guard, findProject, loadSchema } from './guard.ts';
 import { RequestRedaction, countLabels, type Detector, type LabelCounts } from './redaction.ts';
 import { DATA, PORT } from './paths.ts';
@@ -53,6 +53,7 @@ export function startDaemon(options: DaemonOptions = {}): http.Server {
   if (!fs.existsSync(tokenFile)) fs.writeFileSync(tokenFile, crypto.randomBytes(24).toString('hex'), { mode: 0o600 });
   const token = fs.readFileSync(tokenFile, 'utf8').trim();
 
+  const vault = openVault(path.join(data, 'vault.sqlite'));
   const db = new DatabaseSync(path.join(data, 'audit.sqlite'));
   db.exec(`CREATE TABLE IF NOT EXISTS audit(ts TEXT, session_id TEXT, event TEXT, tool_name TEXT, label TEXT, count INTEGER, decision TEXT, latency_ms INTEGER)`);
   const insertAuditRow = db.prepare(`INSERT INTO audit VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?)`);
@@ -99,6 +100,11 @@ export function startDaemon(options: DaemonOptions = {}): http.Server {
     }
 
     let decision = 'allow';
+    const unknownTokens = isWhitelisted(toolName, policy) ? unresolvedTokens(JSON.stringify(input)) : [];
+    if (unknownTokens.length) {
+      decision = output.permissionDecision = 'ask';
+      output.permissionDecisionReason = `cc-hush: ${unknownTokens.length} PII token(s) this daemon cannot resolve (${unknownTokens.slice(0, 3).join(', ')}). They were issued before the vault was persisted, or by another machine. Allowing writes them as literal placeholders; re-fetch the source data to get resolvable tokens.`;
+    }
     const runsShellOrSql = toolName === 'Bash' || toolName.startsWith('mcp__');
     if (runsShellOrSql) {
       const cwd = event.cwd ?? process.cwd();
@@ -175,7 +181,11 @@ export function startDaemon(options: DaemonOptions = {}): http.Server {
     const options = { host: upstream.hostname, port: upstream.port || undefined, method: req.method, path: upstream.pathname.replace(/\/$/, '') + req.url, headers };
     const upstreamRequest = client.request(options, (upstreamResponse) => {
       const status = upstreamResponse.statusCode ?? 502;
-      if (status >= 400) console.error(`[hush] upstream ${status} for ${req.method} ${req.url} (client retry ${req.headers['x-stainless-retry-count'] ?? 0}${upstreamResponse.headers['retry-after'] ? `, retry-after ${upstreamResponse.headers['retry-after']}` : ''})`);
+      if (status >= 400) {
+        let body = '';
+        upstreamResponse.on('data', (chunk: Buffer) => { if (body.length < 600) body += chunk.toString('utf8', 0, 600); });
+        upstreamResponse.on('end', () => console.error(`[hush] upstream ${status} for ${req.method} ${req.url} (client retry ${req.headers['x-stainless-retry-count'] ?? 0}, retry-after ${upstreamResponse.headers['retry-after'] ?? 'none'}): ${body.replace(/\s+/g, ' ').slice(0, 600)}`));
+      }
       const responseHeaders = { ...upstreamResponse.headers };
       delete responseHeaders['transfer-encoding'];
       res.writeHead(status, responseHeaders);
@@ -210,7 +220,7 @@ export function startDaemon(options: DaemonOptions = {}): http.Server {
   server.keepAliveTimeout = 65_000;
   server.requestTimeout = 0;
   server.headersTimeout = 0;
-  server.on('close', () => db.close());
+  server.on('close', () => { db.close(); vault.close(); });
   server.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code !== 'EADDRINUSE') throw error;
     // Exit 0 on purpose: launchd, systemd and start.vbs only restart on failure, and another daemon already serves.

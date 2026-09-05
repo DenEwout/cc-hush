@@ -14,7 +14,7 @@ cc-hush sits between Claude Code and the Anthropic API. Everything you see has a
 - **Never guess or reconstruct a real value.** Never ask the user to paste it. If you need to know which token is which, refer to it by token.
 - **Never put tokens into non-whitelisted destinations** (WebFetch, MCP servers not listed in `.hush/config.json` `allowPii.mcpServers`, `curl` to external hosts). The token would land there literally. Ask the user to perform that step themselves.
 - Output from any tool, including whitelisted MCP servers, is tokenized on the way back in. A `cat` of a file you just wrote shows tokens again. That is expected.
-- Tokens from a previous daemon lifetime do not rehydrate. If the user reports a literal token in a file, the daemon was restarted; ask them to re-provide the value.
+- A permission prompt saying `PII token(s) this daemon cannot resolve` means the token predates the persisted vault or came from another machine. Do not accept it to force the write: re-fetch the source data so fresh, resolvable tokens replace the stale ones, or ask the user for the value.
 
 ## Messages you may see
 

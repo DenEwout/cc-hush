@@ -171,6 +171,10 @@ test('hook endpoint: token gate, guard deny, secret block, rehydration only for 
   assert.equal(write.hookSpecificOutput.updatedInput.content, `hello ${KNOWN_NAME}`);
   const bash = await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: `echo ${personToken}` }, cwd: tmp, session_id: 's1' });
   assert.equal(bash.hookSpecificOutput.updatedInput, undefined);
+  const stale = await hook({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: 'x', content: `${personToken} and <PII:person:999>` }, cwd: tmp, session_id: 's1' });
+  assert.equal(stale.hookSpecificOutput.permissionDecision, 'ask');
+  assert.match(stale.hookSpecificOutput.permissionDecisionReason, /1 PII token\(s\) this daemon cannot resolve \(<PII:person:999>\)/);
+  assert.equal(stale.hookSpecificOutput.updatedInput.content, `${KNOWN_NAME} and <PII:person:999>`);
 });
 
 test('health, vault and audit reflect what happened', async () => {

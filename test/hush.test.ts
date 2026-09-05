@@ -55,6 +55,20 @@ test('vault: stable tokens, round trip, known-value redaction', () => {
   assert.equal(isWhitelisted('mcp__claude_ai_Atlassian_Rovo__addCommentToJiraIssue', { ...DEFAULT_POLICY, allowPii: { tools: [], mcpServers: ['claude_ai_Atlassian'] } }), true);
 });
 
+test('vault: survives a daemon restart through vault.sqlite, numbering continues, unknown tokens are reported', async () => {
+  const { openVault, unresolvedTokens, size } = await import('../daemon/vault.ts');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'hush-vault-')), 'vault.sqlite');
+  const first = openVault(file);
+  const token = tokenize('mail@persist.example', 'private_email');
+  first.close();
+  const second = openVault(file);
+  assert.equal(rehydrate(`to ${token}`), 'to mail@persist.example');
+  assert.equal(size(), 1);
+  assert.equal(tokenize('other@persist.example', 'private_email'), token.replace(/\d+>$/, (n) => `${Number(n.slice(0, -1)) + 1}>`));
+  assert.deepEqual(unresolvedTokens(`${token} and <PII:person:99> twice <PII:person:99>`), ['<PII:person:99>']);
+  second.close();
+});
+
 test('mcp key pass', () => {
   const out: any = mcpKeyPass({ fields: { reporter: { displayName: 'Bob Jones', self: 'https://x/1' }, description: { type: 'mention', attrs: { text: '@Bob Jones' } } } });
   assert.match(out.fields.reporter.displayName, /^<PII:person:/);
